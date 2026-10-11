@@ -98,4 +98,5 @@ def compare_distribution(population: pd.DataFrame, sample: pd.DataFrame,
         "모집단(%)": population[column].value_counts(normalize=True) * 100,
         "표본(%)": sample[column].value_counts(normalize=True) * 100,
     }).fillna(0).round(1)
+    out = out[(out["모집단(%)"] > 0) | (out["표본(%)"] > 0)]
     return out.sort_values("모집단(%)", ascending=False)

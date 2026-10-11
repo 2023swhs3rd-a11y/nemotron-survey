@@ -7,6 +7,24 @@ NVIDIA의 한국인 합성 페르소나 100만 명([nvidia/Nemotron-Personas-Kor
 > 합성 페르소나의 응답은 실제 여론이 아닙니다. 설문지 사전 점검(파일럿), 문항 개선, 가설 탐색에 쓰고
 > 결론은 실제 조사로 확인하세요.
 
+## 웹 대시보드로 쓰기 (Streamlit Community Cloud, 무료)
+
+설치 없이 `https://<이름>.streamlit.app` 주소로 접속해 쓰는 방법입니다. 처음 한 번만 연결하면 이후 저장소에 올린 변경이 자동 반영됩니다.
+
+1. https://share.streamlit.io 에 GitHub 계정으로 로그인합니다.
+2. **Create app → Deploy a public app from GitHub**를 고릅니다.
+3. Repository `2023swhs3rd-a11y/nemotron-survey`, Branch `main`, Main file path `app.py`를 입력합니다.
+4. App URL에 원하는 주소(예: `nemotron-survey`)를 적고, Advanced settings에서 Python 3.12를 고른 뒤 **Deploy**를 누릅니다.
+
+처음 접속하면 Hugging Face에서 100만 명의 인구통계 열만 읽어 오느라 1~2분 걸립니다(텍스트 열은 받지 않음).
+
+## 응답 방식
+
+- **데모**: 규칙 기반 임의 응답으로 화면과 통계 흐름을 확인합니다. 수치에 의미는 없습니다.
+- **응답 파일 업로드**: 표본을 뽑은 뒤 응답 양식(엑셀/CSV)을 내려받아 문항별 1~5점을 채워 올리면 바로 통계를 냅니다.
+- **Claude** (선택): 환경변수나 Streamlit Secrets에 `ANTHROPIC_API_KEY`가 있거나 `ENABLE_CLAUDE = "1"`이면 나타납니다.
+  Claude가 각 페르소나가 되어 응답합니다. API 사용료는 Claude Pro 구독과 별도로 Console에서 결제합니다.
+
 ## 흐름
 
 1. **대상 선택**: 나이, 성별, 시도·시군구, 학력, 전공 계열, 혼인 상태, 주거 형태, 가구 유형, 직업 키워드로 인구집단을 고릅니다.
@@ -14,7 +32,7 @@ NVIDIA의 한국인 합성 페르소나 100만 명([nvidia/Nemotron-Personas-Kor
    집단 비교를 계획하면 검정력 분석(효과크기 d, 검정력 80%)으로 집단당 필요 인원을 더해 권장 표본을 냅니다.
    예) 모집단이 크면 95% 신뢰수준·±5% 오차에서 384명, 3개 연령대를 d=0.3으로 비교하면 525명.
 3. **층화 추출**: 성별·연령대·시도 등 층별 모집단 비율을 그대로 유지해 뽑습니다.
-4. **응답 생성**: Claude가 각 페르소나(인구통계 + 직업·가족·성장 배경·커리어 목표 서술)가 되어 문항마다 1~5점으로 답합니다.
+4. **응답 만들기**: 위 응답 방식 중 하나로 응답을 만듭니다. Claude 방식에서는 Claude가 각 페르소나(인구통계 + 직업·가족·성장 배경·커리어 목표 서술)가 되어 문항마다 1~5점으로 답합니다.
    JSON 스키마로 출력을 강제해 응답이 항상 1~5 정수로 들어옵니다.
 5. **통계**: 문항별 평균·표준편차·95% 신뢰구간·응답 분포·긍정/부정 비율, 영역별 척도 점수와 Cronbach α,
    집단 비교(두 집단 Welch t·Mann-Whitney, 세 집단 이상 일원분산분석·Kruskal-Wallis, 효과크기 d·η²).
@@ -38,8 +56,8 @@ NVIDIA의 한국인 합성 페르소나 100만 명([nvidia/Nemotron-Personas-Kor
 척도: 1 전혀 그렇지 않다 · 2 그렇지 않다 · 3 보통이다 · 4 그렇다 · 5 매우 그렇다.
 역문항(Q04)은 영역 점수를 낼 때 6−점수로 바꿉니다.
 
-**문항 추가**: 앱의 3단계 "문항 추가하기"에서 넣으면 `custom_questions.json`에 저장되어 다음 실행에도 남습니다.
-기본 문항은 `survey/questions.json`에서 직접 고칠 수 있습니다.
+**문항 추가**: 앱의 3단계 "문항 추가하기"에서 넣습니다. 추가 문항은 브라우저 세션 동안 유지되고, JSON으로 내려받았다가 다음에 불러올 수 있습니다.
+모든 사용자에게 기본으로 보이게 하려면 내려받은 `custom_questions.json`을 저장소 최상위에 올리세요. 기본 문항은 `survey/questions.json`에서 고칩니다.
 
 ## 설치와 실행
 
@@ -53,8 +71,7 @@ streamlit run app.py
 Claude API 키는 앱 사이드바의 입력칸에 넣거나, 실행 전에 `export ANTHROPIC_API_KEY=sk-ant-...`로 지정합니다.
 키는 [Claude Console](https://console.anthropic.com)의 API Keys에서 발급합니다.
 
-처음 실행하면 Hugging Face에서 데이터(parquet)를 내려받아 캐시합니다. 이미 받아 둔 폴더가 있으면
-`NEMOTRON_DATA_DIR=/경로`로 지정하세요.
+데이터는 Hugging Face에서 필요한 열만 바로 읽습니다. parquet 파일을 받아 둔 폴더가 있으면 `NEMOTRON_DATA_DIR=/경로`로 지정하세요.
 
 API 키 없이 화면과 통계 흐름만 보려면 사이드바에서 **데모** 모드를 고르세요(규칙 기반 임의 응답이라 수치에 의미는 없습니다).
 데이터 없이 시험하려면 가짜 데이터를 만들어 쓸 수 있습니다.
@@ -94,6 +111,7 @@ survey/data.py          데이터 로드, 인구집단 필터
 survey/sampling.py      표본 크기 계산, 층화 추출
 survey/questions.json   추천 문항과 척도
 survey/simulate.py      Claude 응답 생성, 데모 응답
+survey/responses.py     응답 양식과 업로드 파일 검사
 survey/analysis.py      기술통계, 신뢰도, 집단 비교, 엑셀 보고서
 tests/                  테스트와 가짜 데이터 생성기
 ```

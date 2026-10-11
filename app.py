@@ -4,7 +4,9 @@
 """
 from __future__ import annotations
 
+import json
 import os
+from dataclasses import asdict
 from datetime import datetime
 
 import pandas as pd
@@ -14,7 +16,8 @@ import streamlit as st
 from survey import analysis
 from survey.data import COLUMN_LABELS, PopulationFilter, load_demographics, load_personas
 from survey.questions import (Question, load_custom_questions, load_default_questions,
-                              load_scale, next_custom_id, save_custom_questions)
+                              load_scale, next_custom_id)
+from survey.responses import read_responses, response_template
 from survey.sampling import compare_distribution, plan_sample_size, stratified_sample
 from survey.simulate import DEFAULT_MODEL, MODEL_CHOICES, run_survey
 
@@ -32,6 +35,10 @@ def get_demographics() -> pd.DataFrame:
 
 def options(df: pd.DataFrame, col: str) -> list[str]:
     return sorted(df[col].dropna().astype(str).unique().tolist())
+
+
+def questions_json(qs: list[Question]) -> bytes:
+    return json.dumps([asdict(q) for q in qs], ensure_ascii=False, indent=2).encode("utf-8")
 
 
 def likert_chart(summary: pd.DataFrame, scale: dict[int, str]) -> go.Figure:
@@ -57,32 +64,39 @@ st.title("대학·진로교육 인식 가상 설문")
 st.caption("NVIDIA Nemotron-Personas-Korea 합성 페르소나 100만 명 중 원하는 인구집단을 골라 "
            "리커트 5점 척도 설문을 시뮬레이션하고 바로 통계를 냅니다.")
 
-# ---------------- 사이드바: 응답 생성 설정 ----------------
+# ---------------- 사이드바: 응답 방식 ----------------
+def secret(name: str) -> str:
+    try:
+        return str(st.secrets.get(name, "")) or os.environ.get(name, "")
+    except Exception:  # secrets.toml이 없으면 예외가 난다
+        return os.environ.get(name, "")
+
+
+env_key = secret("ANTHROPIC_API_KEY")
+claude_enabled = bool(env_key) or secret("ENABLE_CLAUDE") == "1"
+MODES = {"demo": "데모(규칙 기반 임의 응답)", "upload": "응답 파일 업로드"}
+if claude_enabled:
+    MODES["llm"] = "Claude가 페르소나로 응답"
+
 with st.sidebar:
-    st.header("응답 생성 설정")
-    env_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    mode = st.radio(
-        "응답 방식", ["llm", "demo"], index=0 if env_key else 1,
-        format_func=lambda m: "Claude가 페르소나로 응답" if m == "llm" else "데모(규칙 기반 임의 응답)",
-    )
-    api_key = env_key
-    if mode == "llm":
+    st.header("응답 방식")
+    mode = st.radio("응답을 어떻게 만들까요?", list(MODES), format_func=MODES.get)
+    api_key, model, effort, workers = env_key, DEFAULT_MODEL, "low", 8
+    if mode == "demo":
+        st.info("데모 응답은 화면과 통계 흐름 확인용입니다. 연구 결과로 쓰지 마세요.")
+    elif mode == "upload":
+        st.info("4단계에서 응답 양식을 내려받아 1~5점을 채운 뒤 올리면 바로 통계를 냅니다. "
+                "실제 응답자에게 받은 값이나 다른 도구로 만든 응답을 넣을 수 있습니다.")
+    else:
         typed = st.text_input("Claude API 키", type="password", placeholder="sk-ant-api03-...",
                               help="console.anthropic.com의 API Keys에서 발급합니다. "
                                    "이 브라우저 세션에서만 쓰이고 저장되지 않습니다.").strip()
         api_key = typed or env_key
-        if typed:
-            st.caption("입력한 키를 사용합니다.")
-        elif env_key:
-            st.caption(f"터미널에 설정된 키를 사용합니다 ({env_key[:10]}…). 다른 키를 쓰려면 위에 입력하세요.")
-        else:
+        if not api_key:
             st.warning("Claude API 키를 입력하세요.")
         model = st.selectbox("모델", MODEL_CHOICES, index=MODEL_CHOICES.index(DEFAULT_MODEL))
         effort = st.select_slider("추론 강도(effort)", ["low", "medium", "high"], value="low")
         workers = st.slider("동시 요청 수", 1, 32, 8)
-    else:
-        st.info("데모 응답은 화면과 통계 흐름 확인용입니다. 연구 결과로 쓰지 마세요.")
-        model, effort, workers = DEFAULT_MODEL, "low", 8
     has_key = bool(api_key)
 
 demo = get_demographics()
@@ -135,7 +149,7 @@ seed = k2.number_input("난수 시드(같은 값이면 같은 표본)", value=42
 
 if st.button("표본 추출", type="primary"):
     sample = stratified_sample(population, int(n), strata, int(seed))
-    personas = load_personas(sample["uuid"].tolist())
+    personas = load_personas(sample)
     st.session_state.sample = sample.merge(personas, on="uuid", how="left")
     st.session_state.pop("responses", None)
 
@@ -155,7 +169,9 @@ st.header("3. 설문 문항 (리커트 5점)")
 scale = load_scale()
 st.caption(" · ".join(f"{k}={v}" for k, v in scale.items()))
 defaults = load_default_questions()
-custom = load_custom_questions()
+if "custom_questions" not in st.session_state:
+    st.session_state.custom_questions = load_custom_questions()
+custom: list[Question] = st.session_state.custom_questions
 all_q = defaults + custom
 table = pd.DataFrame([{"사용": True, "번호": q.id, "영역": q.category, "문항": q.text,
                        "역문항": q.reverse} for q in all_q])
@@ -173,35 +189,67 @@ with st.expander("문항 추가하기"):
         if st.form_submit_button("추가") and text.strip():
             cat = new_cat.strip() if category == "(새 영역)" and new_cat.strip() else category
             custom.append(Question(next_custom_id(all_q), text.strip(), cat, reverse))
-            save_custom_questions(custom)
             st.rerun()
     if custom:
         remove = st.multiselect("삭제할 추가 문항", [q.id for q in custom])
         if st.button("선택 문항 삭제") and remove:
-            save_custom_questions([q for q in custom if q.id not in remove])
+            st.session_state.custom_questions = [q for q in custom if q.id not in remove]
             st.rerun()
+    st.caption("추가한 문항은 이 브라우저 세션 동안 유지됩니다. 다음에도 쓰려면 파일로 내려받아 두었다가 불러오세요.")
+    c_down, c_up = st.columns(2)
+    c_down.download_button("추가 문항 내려받기(JSON)", questions_json(custom), "custom_questions.json",
+                           mime="application/json", disabled=not custom)
+    uploaded_q = c_up.file_uploader("추가 문항 불러오기", type=["json"], key="q_upload")
+    if uploaded_q is not None and st.session_state.get("q_upload_done") != uploaded_q.file_id:
+        loaded = [Question(**q) for q in json.loads(uploaded_q.getvalue().decode("utf-8"))]
+        used = {q.id for q in defaults}
+        st.session_state.custom_questions = [q for q in loaded if q.id not in used]
+        st.session_state.q_upload_done = uploaded_q.file_id
+        st.rerun()
 
 # ---------------- 4. 실행 ----------------
-st.header("4. 가상 설문 실행")
+st.header("4. 응답 만들기")
 if sample is None:
     st.warning("먼저 2단계에서 표본을 추출하세요.")
     st.stop()
 if not questions:
     st.warning("문항을 하나 이상 고르세요.")
     st.stop()
-st.write(f"{len(sample):,}명 × {len(questions)}문항, 응답자당 요청 1회")
-if st.button("설문 시작", type="primary", disabled=(mode == "llm" and not has_key)):
-    bar = st.progress(0.0, text="응답 생성 중")
-    responses = run_survey(sample, questions, mode=mode, model=model, effort=effort, workers=workers,
-                           api_key=api_key or None,
-                           progress=lambda d, t: bar.progress(d / t, text=f"응답 생성 중 {d}/{t}"))
-    st.session_state.responses = responses
+def save_meta() -> None:
     st.session_state.meta = pd.DataFrame({
         "항목": ["실행 시각", "응답 방식", "모델", "effort", "대상 조건", "모집단 수", "표본 수", "문항"],
-        "값": [datetime.now().isoformat(timespec="seconds"), mode, model if mode == "llm" else "-",
+        "값": [datetime.now().isoformat(timespec="seconds"), MODES[mode], model if mode == "llm" else "-",
               effort if mode == "llm" else "-", flt.describe(), f"{len(population):,}", len(sample),
               ", ".join(q.id for q in questions)],
     })
+
+
+if mode == "upload":
+    st.write("1) 응답 양식을 내려받아 각 문항 칸에 1~5 정수를 채우세요. 2) 채운 파일을 올리세요.")
+    template = response_template(sample, questions)
+    t1, t2 = st.columns(2)
+    t1.download_button("응답 양식 내려받기(엑셀)", analysis.to_excel({"응답": template}),
+                       "response_template.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    t2.download_button("응답 양식 내려받기(CSV)", template.to_csv(index=False).encode("utf-8-sig"),
+                       "response_template.csv", mime="text/csv")
+    filled = st.file_uploader("채운 응답 파일 올리기", type=["xlsx", "csv"])
+    if filled is not None and st.button("통계 내기", type="primary"):
+        try:
+            st.session_state.responses = read_responses(filled, sample, questions)
+            save_meta()
+        except ValueError as e:
+            st.error(str(e))
+else:
+    unit = "응답자당 요청 1회" if mode == "llm" else "규칙 기반 임의 응답"
+    st.write(f"{len(sample):,}명 × {len(questions)}문항, {unit}")
+    if st.button("설문 시작", type="primary", disabled=(mode == "llm" and not has_key)):
+        bar = st.progress(0.0, text="응답 생성 중")
+        st.session_state.responses = run_survey(
+            sample, questions, mode=mode, model=model, effort=effort, workers=workers,
+            api_key=api_key or None,
+            progress=lambda d, t: bar.progress(d / t, text=f"응답 생성 중 {d}/{t}"))
+        save_meta()
 
 responses = st.session_state.get("responses")
 if responses is None:

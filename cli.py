@@ -52,7 +52,7 @@ def main() -> None:
     n = a.n or plan.n_total
 
     sample = stratified_sample(population, n, a.strata, a.seed)
-    sample = sample.merge(load_personas(sample["uuid"].tolist()), on="uuid", how="left")
+    sample = sample.merge(load_personas(sample), on="uuid", how="left")
     questions = load_all_questions()
     print(f"{len(sample):,}명 × {len(questions)}문항 응답 생성({a.mode})")
     responses = run_survey(sample, questions, mode=a.mode, model=a.model, effort=a.effort,

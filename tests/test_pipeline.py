@@ -38,14 +38,14 @@ def test_filter_and_stratified_sample(data_root):
     one = PopulationFilter(sex=["남자"], province=["서울"]).apply(demo)  # 층 기준이 하나만 남는 경우
     assert len(stratified_sample(one, 100)) == 100
     assert len(stratified_sample(pop, 150, ["province"])) == 150
-    personas = load_personas(s["uuid"].head(5).tolist(), data_root)
+    personas = load_personas(s.head(5), data_root)
     assert len(personas) == 5 and "persona" in personas
 
 
 def test_demo_run_and_report(data_root):
     demo = load_demographics(data_root)
     s = stratified_sample(demo, 300)
-    s = s.merge(load_personas(s["uuid"].tolist(), data_root), on="uuid", how="left")
+    s = s.merge(load_personas(s, data_root), on="uuid", how="left")
     qs = load_default_questions()
     res = run_survey(s, qs, mode="demo", workers=4)
     assert len(res) == 300 and res[[q.id for q in qs]].isin([1, 2, 3, 4, 5]).all().all()
@@ -95,3 +95,41 @@ def test_ask_claude_request_shape():
     assert seen["fallbacks"] == "default" and seen["output_config"]["format"]["type"] == "json_schema"
     ask_claude(client, row, qs, "claude-haiku-5-5")
     assert "fallbacks" not in seen or seen["model"] == "claude-haiku-5-5"
+
+
+def test_remote_loaders(monkeypatch, data_root):
+    """원격 경로: 행 번호로 페르소나를 가져오고 uuid가 어긋난 행은 버린다."""
+    from survey import data as d
+
+    demo = load_demographics(data_root)
+    full = pd.read_parquet(data_root / "train.parquet")
+    monkeypatch.setattr(d, "local_dir", lambda: None)
+    monkeypatch.setattr(d, "_fetch_row", lambda i: {c: full.iloc[i][c] for c in d.PERSONA_COLUMNS})
+    s = stratified_sample(demo, 30)
+    got = d.load_personas(s)
+    assert len(got) == 30 and set(got["uuid"]) == set(s["uuid"])
+    monkeypatch.setattr(d, "_get_json", lambda url: {"parquet_files": [
+        {"config": "default", "split": "train", "filename": "0001.parquet"},
+        {"config": "default", "split": "train", "filename": "0000.parquet"}]})
+    paths = d.remote_parquet_paths()
+    assert paths[0].endswith("@refs%2Fconvert%2Fparquet/default/train/0000.parquet")
+
+
+def test_upload_responses(data_root):
+    import io
+    from survey.responses import read_responses, response_template
+
+    demo = load_demographics(data_root)
+    s = stratified_sample(demo, 20)
+    qs = load_default_questions()
+    t = response_template(s, qs)
+    t[[q.id for q in qs]] = 4
+    t.loc[t.index[0], [q.id for q in qs]] = pd.NA      # 응답 없는 사람
+    buf = io.BytesIO(t.to_csv(index=False).encode()); buf.name = "r.csv"
+    res = read_responses(buf, s, qs)
+    assert len(res) == 20 and (res["error"] == "응답 없음").sum() == 1
+    assert analysis.item_summary(res[res["error"] == ""], qs)["평균"].eq(4).all()
+    t.loc[t.index[1], "Q01"] = 7
+    bad = io.BytesIO(t.to_csv(index=False).encode()); bad.name = "r.csv"
+    with pytest.raises(ValueError):
+        read_responses(bad, s, qs)
