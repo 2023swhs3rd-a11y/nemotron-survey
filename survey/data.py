@@ -5,8 +5,10 @@ import json
 import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -45,6 +47,7 @@ AGE_LABELS = ["19-29세", "30대", "40대", "50대", "60대", "70세 이상"]
 #    표본 페르소나 텍스트는 Hugging Face datasets-server의 /rows API로 행 번호를 지정해 가져온다.
 PARQUET_REVISION = "refs%2Fconvert%2Fparquet"
 DATASETS_SERVER = "https://datasets-server.huggingface.co"
+USER_AGENT = "nemotron-survey/1.0 (+https://github.com/2023swhs3rd-a11y/nemotron-survey)"
 CATEGORY_COLUMNS = ["sex", "marital_status", "military_status", "family_type", "housing_type",
                     "education_level", "bachelors_field", "district", "province"]
 
@@ -57,7 +60,8 @@ def local_dir() -> Path | None:
 def _get_json(url: str, retries: int = 5) -> dict:
     for attempt in range(retries):
         try:
-            with urllib.request.urlopen(url, timeout=60) as resp:
+            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+            with urllib.request.urlopen(req, timeout=60) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             if e.code not in (429, 500, 502, 503, 504) or attempt == retries - 1:
@@ -120,7 +124,17 @@ def _fetch_row(idx: int) -> dict:
     return {c: row.get(c) for c in PERSONA_COLUMNS}
 
 
-def load_personas(sample: pd.DataFrame, root: Path | None = None, workers: int = 8) -> pd.DataFrame:
+def _fetch_by_uuid(uuids: list[str]) -> list[dict]:
+    """uuid 최대 50개를 한 번의 /filter 요청으로 가져온다."""
+    where = " OR ".join(f"\"uuid\"='{u}'" for u in uuids)
+    query = urllib.parse.urlencode({"dataset": REPO_ID, "config": "default", "split": "train",
+                                    "where": where, "length": 100})
+    data = _get_json(f"{DATASETS_SERVER}/filter?{query}")
+    return [{c: r["row"].get(c) for c in PERSONA_COLUMNS} for r in data.get("rows", [])]
+
+
+def load_personas(sample: pd.DataFrame, root: Path | None = None, workers: int = 6,
+                  progress: Callable[[int, int], None] | None = None) -> pd.DataFrame:
     """표본으로 뽑힌 사람들의 페르소나 텍스트만 읽는다."""
     root = root or local_dir()
     uuids = sample["uuid"].astype(str).tolist()
@@ -132,10 +146,34 @@ def load_personas(sample: pd.DataFrame, root: Path | None = None, workers: int =
         return dataset.to_table(columns=PERSONA_COLUMNS, filter=ds.field("uuid").isin(values)).to_pandas()
     if not uuids:
         return pd.DataFrame(columns=PERSONA_COLUMNS)
+
+    chunks = [uuids[i:i + 50] for i in range(0, len(uuids), 50)]
+    rows: list[dict] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        rows = list(pool.map(_fetch_row, sample["row_idx"].tolist()))
-    out = pd.DataFrame(rows)
-    return out[out["uuid"].isin(uuids)]  # 행 번호가 어긋나면 잘못된 텍스트를 붙이지 않도록 uuid로 확인
+        futures = [pool.submit(_fetch_by_uuid, c) for c in chunks]
+        for i, f in enumerate(as_completed(futures), 1):
+            try:
+                rows.extend(f.result())
+            except Exception:  # 필터 요청이 실패한 묶음은 아래에서 행 번호로 다시 가져온다
+                pass
+            if progress:
+                progress(i, len(chunks))
+    got = {r["uuid"] for r in rows}
+    missing = sample[~sample["uuid"].astype(str).isin(got)]
+    if len(missing):
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for r in pool.map(lambda i: _safe(_fetch_row, i), missing["row_idx"].tolist()):
+                if r:
+                    rows.append(r)
+    out = pd.DataFrame(rows, columns=PERSONA_COLUMNS).drop_duplicates("uuid")
+    return out[out["uuid"].isin(uuids)]  # 엉뚱한 행이 섞이지 않도록 uuid로 확인
+
+
+def _safe(fn, *args):
+    try:
+        return fn(*args)
+    except Exception:
+        return None
 
 
 @dataclass

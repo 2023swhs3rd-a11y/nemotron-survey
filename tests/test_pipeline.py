@@ -105,9 +105,18 @@ def test_remote_loaders(monkeypatch, data_root):
     full = pd.read_parquet(data_root / "train.parquet")
     monkeypatch.setattr(d, "local_dir", lambda: None)
     monkeypatch.setattr(d, "_fetch_row", lambda i: {c: full.iloc[i][c] for c in d.PERSONA_COLUMNS})
-    s = stratified_sample(demo, 30)
+    by_uuid = full.set_index("uuid", drop=False)
+
+    def fake_filter(uuids):  # 첫 묶음은 실패시켜 행 번호 경로도 함께 확인
+        if uuids[0] == first:
+            raise OSError("boom")
+        return [{c: by_uuid.loc[u][c] for c in d.PERSONA_COLUMNS} for u in uuids]
+
+    monkeypatch.setattr(d, "_fetch_by_uuid", fake_filter)
+    s = stratified_sample(demo, 120)
+    first = s["uuid"].iloc[0]
     got = d.load_personas(s)
-    assert len(got) == 30 and set(got["uuid"]) == set(s["uuid"])
+    assert len(got) == 120 and set(got["uuid"]) == set(s["uuid"])
     monkeypatch.setattr(d, "_get_json", lambda url: {"parquet_files": [
         {"config": "default", "split": "train", "filename": "0001.parquet"},
         {"config": "default", "split": "train", "filename": "0000.parquet"}]})

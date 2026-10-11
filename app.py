@@ -148,9 +148,8 @@ strata = k1.multiselect("층화 기준(모집단 비율 유지)", COMPARE_CHOICE
 seed = k2.number_input("난수 시드(같은 값이면 같은 표본)", value=42, step=1)
 
 if st.button("표본 추출", type="primary"):
-    sample = stratified_sample(population, int(n), strata, int(seed))
-    personas = load_personas(sample)
-    st.session_state.sample = sample.merge(personas, on="uuid", how="left")
+    # 페르소나 문장은 필요할 때(미리 보기, Claude 응답)만 가져와 표본 추출을 바로 끝낸다
+    st.session_state.sample = stratified_sample(population, int(n), strata, int(seed))
     st.session_state.pop("responses", None)
 
 sample = st.session_state.get("sample")
@@ -161,8 +160,15 @@ if sample is not None:
         for i, col in enumerate(["sex", "age_group", "province"]):
             cols[i].write(f"**{COLUMN_LABELS[col]}**")
             cols[i].dataframe(compare_distribution(population, sample, col))
-    with st.expander("표본 페르소나 미리 보기"):
-        st.dataframe(sample.head(20))
+    with st.expander("표본 미리 보기"):
+        preview = sample.head(20)
+        if st.checkbox("페르소나 설명 문장도 불러오기(20명)"):
+            try:
+                with st.spinner("Hugging Face에서 페르소나 문장을 가져오는 중..."):
+                    preview = preview.merge(load_personas(preview), on="uuid", how="left")
+            except Exception as e:
+                st.warning(f"페르소나 문장을 가져오지 못했습니다({type(e).__name__}). 인구통계 정보만 보여 줍니다.")
+        st.dataframe(preview, hide_index=True)
 
 # ---------------- 3. 문항 ----------------
 st.header("3. 설문 문항 (리커트 5점)")
@@ -244,9 +250,18 @@ else:
     unit = "응답자당 요청 1회" if mode == "llm" else "규칙 기반 임의 응답"
     st.write(f"{len(sample):,}명 × {len(questions)}문항, {unit}")
     if st.button("설문 시작", type="primary", disabled=(mode == "llm" and not has_key)):
-        bar = st.progress(0.0, text="응답 생성 중")
+        bar = st.progress(0.0, text="페르소나 문장 가져오는 중")
+        run_sample = sample
+        if mode == "llm" and "persona" not in sample:
+            try:
+                personas = load_personas(sample, progress=lambda d, t: bar.progress(
+                    d / t, text=f"페르소나 문장 가져오는 중 {d}/{t}"))
+                run_sample = sample.merge(personas, on="uuid", how="left")
+            except Exception as e:
+                st.warning(f"페르소나 문장을 가져오지 못해 인구통계 정보만으로 응답합니다({type(e).__name__}).")
+        bar.progress(0.0, text="응답 생성 중")
         st.session_state.responses = run_survey(
-            sample, questions, mode=mode, model=model, effort=effort, workers=workers,
+            run_sample, questions, mode=mode, model=model, effort=effort, workers=workers,
             api_key=api_key or None,
             progress=lambda d, t: bar.progress(d / t, text=f"응답 생성 중 {d}/{t}"))
         save_meta()
