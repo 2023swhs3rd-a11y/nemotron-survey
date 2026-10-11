@@ -43,6 +43,8 @@ NVIDIA의 한국인 합성 페르소나 100만 명([nvidia/Nemotron-Personas-Kor
 
 ## 설치와 실행
 
+Python 3.10 이상이 필요합니다(Claude Python SDK 1.x 요구 사항). 버전은 `python3 --version`으로 확인하세요.
+
 ```bash
 pip install -r requirements.txt
 export ANTHROPIC_API_KEY=sk-ant-...      # Claude 응답 모드에 필요
