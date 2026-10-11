@@ -67,12 +67,16 @@ with st.sidebar:
     )
     api_key = env_key
     if mode == "llm":
-        if not env_key:
-            api_key = st.text_input("Claude API 키", type="password", placeholder="sk-ant-...",
-                                    help="console.anthropic.com의 API Keys에서 발급합니다. "
-                                         "이 브라우저 세션에서만 쓰이고 저장되지 않습니다.").strip()
-            if not api_key:
-                st.warning("Claude API 키를 입력하세요.")
+        typed = st.text_input("Claude API 키", type="password", placeholder="sk-ant-api03-...",
+                              help="console.anthropic.com의 API Keys에서 발급합니다. "
+                                   "이 브라우저 세션에서만 쓰이고 저장되지 않습니다.").strip()
+        api_key = typed or env_key
+        if typed:
+            st.caption("입력한 키를 사용합니다.")
+        elif env_key:
+            st.caption(f"터미널에 설정된 키를 사용합니다 ({env_key[:10]}…). 다른 키를 쓰려면 위에 입력하세요.")
+        else:
+            st.warning("Claude API 키를 입력하세요.")
         model = st.selectbox("모델", MODEL_CHOICES, index=MODEL_CHOICES.index(DEFAULT_MODEL))
         effort = st.select_slider("추론 강도(effort)", ["low", "medium", "high"], value="low")
         workers = st.slider("동시 요청 수", 1, 32, 8)
