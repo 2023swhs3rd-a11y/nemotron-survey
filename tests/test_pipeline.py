@@ -142,3 +142,26 @@ def test_upload_responses(data_root):
     bad = io.BytesIO(t.to_csv(index=False).encode()); bad.name = "r.csv"
     with pytest.raises(ValueError):
         read_responses(bad, s, qs)
+
+
+def test_codebook_scoring_and_estimation():
+    from survey.codebook import estimate_responses, load_codebook, score_text, weight_table
+
+    cb = load_codebook()
+    assert score_text("평범한 하루", cb["cues"]["academic"]["keywords"])[0] == 0
+    assert score_text("대학 시절", cb["cues"]["academic"]["keywords"])[0] == 1
+    assert score_text("대학에서 전공 공부", cb["cues"]["academic"]["keywords"])[0] == 2
+    assert score_text("배우자와 산다", cb["cues"]["lifelong"]["keywords"])[0] == 0  # '배우자'는 평생학습 아님
+
+    qs = load_default_questions()
+    people = pd.DataFrame({
+        "uuid": ["a", "b"], "age": [45, 45], "education_level": ["대학원", "고등학교"],
+        "persona": ["대학에서 전공 공부와 연구를 했다.", "현장에서 손재주로 장사를 해 왔다."],
+    })
+    r = estimate_responses(people, qs, cb, noise_sd=0.0)
+    assert r.loc[0, "Q01"] > r.loc[1, "Q01"]            # 학업 단서·고학력 → 대학 필요성 더 높게
+    assert r.loc[0, "Q04"] < r.loc[1, "Q04"]            # 실무 단서 → 조기 취업 선호 더 높게
+    assert "학업 관여" in r.loc[0, "comment"]
+    again = estimate_responses(people, qs, cb)
+    assert again[[q.id for q in qs]].equals(estimate_responses(people, qs, cb)[[q.id for q in qs]])  # 재현성
+    assert weight_table(qs, cb).loc["Q01", "intercept"] == 3.0

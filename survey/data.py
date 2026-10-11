@@ -26,7 +26,7 @@ DEMOGRAPHIC_COLUMNS = [
 ]
 PERSONA_COLUMNS = [
     "uuid", "persona", "professional_persona", "family_persona",
-    "cultural_background", "career_goals_and_ambitions", "hobbies_and_interests",
+    "cultural_background", "career_goals_and_ambitions", "hobbies_and_interests", "skills_and_expertise",
 ]
 
 # 화면과 통계표에 쓰는 한국어 이름

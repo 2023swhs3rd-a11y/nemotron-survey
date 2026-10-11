@@ -23,12 +23,16 @@ def make(n: int, seed: int = 0) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     prov = rng.choice(list(PROVINCES), n, p=[0.3, 0.12, 0.35, 0.08, 0.1, 0.05])
     edu = rng.choice(EDUCATION, n, p=[0.06, 0.08, 0.35, 0.15, 0.28, 0.06, 0.02])
+    phrases = ["대학에서 전공 공부를 이어 가고 싶다.", "현장에서 손재주로 일해 왔다.", "자녀의 학원비와 입시가 걱정이다.",
+               "생활비를 아끼며 알뜰하게 산다.", "문화센터 강좌에서 새로운 기술을 배우고 있다.",
+               "승진과 자격증 취득으로 경력을 쌓고 싶다.", "평범한 일상을 보낸다."]
+    pick = lambda: " ".join(rng.choice(phrases, 2, replace=False))
     return pd.DataFrame({
         "uuid": [uuid.UUID(int=int(rng.integers(0, 2**63))).hex for _ in range(n)],
-        "professional_persona": "꼼꼼하게 일하며 동료들과 협력하는 편이다.",
+        "professional_persona": [pick() for _ in range(n)],
         "sports_persona": "주말에 가볍게 산책한다.", "arts_persona": "가끔 영화를 본다.",
         "travel_persona": "국내 여행을 즐긴다.", "culinary_persona": "집밥을 좋아한다.",
-        "family_persona": "가족과 저녁을 함께 먹는 것을 중요하게 여긴다.",
+        "family_persona": [pick() for _ in range(n)],
         "persona": "성실하고 현실적인 생활인.", "cultural_background": "지방 소도시에서 자랐다.",
         "skills_and_expertise": "문서 작성", "skills_and_expertise_list": "['문서 작성']",
         "hobbies_and_interests": "독서", "hobbies_and_interests_list": "['독서']",

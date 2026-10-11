@@ -14,6 +14,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from survey import analysis
+from survey.codebook import (cue_friedman, cue_labels, cue_summary, estimate_responses,
+                             load_codebook, weight_table)
 from survey.data import COLUMN_LABELS, PopulationFilter, load_demographics, load_personas
 from survey.questions import (Question, load_custom_questions, load_default_questions,
                               load_scale, next_custom_id)
@@ -74,7 +76,7 @@ def secret(name: str) -> str:
 
 env_key = secret("ANTHROPIC_API_KEY")
 claude_enabled = bool(env_key) or secret("ENABLE_CLAUDE") == "1"
-MODES = {"demo": "데모(규칙 기반 임의 응답)", "upload": "응답 파일 업로드"}
+MODES = {"codebook": "생활서사 코드북 추정", "upload": "응답 파일 업로드", "demo": "데모(규칙 기반 임의 응답)"}
 if claude_enabled:
     MODES["llm"] = "Claude가 페르소나로 응답"
 
@@ -82,7 +84,11 @@ with st.sidebar:
     st.header("응답 방식")
     mode = st.radio("응답을 어떻게 만들까요?", list(MODES), format_func=MODES.get)
     api_key, model, effort, workers = env_key, DEFAULT_MODEL, "low", 8
-    if mode == "demo":
+    if mode == "codebook":
+        st.info("각 페르소나의 생활서사 문장에서 교육·진로 단서를 코드북으로 0~2점 매기고, "
+                "단서 점수와 학력·연령으로 문항별 응답을 추정합니다. 실제 의견의 예측이 아니라 "
+                "가설을 세우기 위한 추정치입니다. 추정 규칙은 4단계에서 보고 고칠 수 있습니다.")
+    elif mode == "demo":
         st.info("데모 응답은 화면과 통계 흐름 확인용입니다. 연구 결과로 쓰지 마세요.")
     elif mode == "upload":
         st.info("4단계에서 응답 양식을 내려받아 1~5점을 채운 뒤 올리면 바로 통계를 냅니다. "
@@ -230,7 +236,47 @@ def save_meta() -> None:
     })
 
 
-if mode == "upload":
+def with_personas(bar) -> pd.DataFrame:
+    """표본에 페르소나 문장을 붙인다. 이미 붙어 있으면 그대로, 실패하면 인구통계만으로 진행."""
+    if "persona" in sample:
+        return sample
+    try:
+        personas = load_personas(sample, progress=lambda d, t: bar.progress(
+            d / t, text=f"페르소나 문장 가져오는 중 {d}/{t}"))
+        merged = sample.merge(personas, on="uuid", how="left")
+        st.session_state.sample = merged
+        return merged
+    except Exception as e:
+        st.warning(f"페르소나 문장을 가져오지 못해 인구통계 정보만 씁니다({type(e).__name__}).")
+        return sample
+
+
+if mode == "codebook":
+    codebook = load_codebook()
+    labels = cue_labels(codebook)
+    with st.expander("코드북: 어떤 단서를 어떻게 찾나요?"):
+        st.markdown("페르소나의 " + ", ".join(f"`{f}`" for f in codebook["text_fields"]) +
+                    " 문장을 하나로 합친 뒤, 단서별 키워드를 찾습니다. **0점** 키워드 없음, "
+                    "**1점** 키워드 1개(약한 단서), **2점** 서로 다른 키워드 2개 이상(반복·구체적 단서).")
+        st.dataframe(pd.DataFrame([{"단서": v["label"], "정의": v["definition"], "키워드": ", ".join(v["keywords"])}
+                                   for v in codebook["cues"].values()]), hide_index=True, width="stretch")
+    with st.expander("추정 규칙: 문항별 가중치 (고칠 수 있음)"):
+        st.markdown("응답 = 기준점 + Σ(가중치 × 단서 점수 0~2) + Σ(가중치 × 인구통계 0/1) + 무작위 오차 → 1~5로 반올림. "
+                    "인구통계 항: `edu_high` 4년제 대학 이상, `young` 35세 미만, `old` 60세 이상. "
+                    "추가한 문항은 기준점 3, 가중치 0으로 시작하니 여기서 정해 주세요.")
+        wt = weight_table(questions, codebook).rename(columns={"intercept": "기준점", **labels})
+        wt_edit = st.data_editor(wt, width="stretch", key="weights_editor")
+        noise_sd = st.slider("무작위 오차 크기(표준편차)", 0.0, 1.5, float(codebook.get("noise_sd", 0.7)), 0.1,
+                             help="0이면 같은 단서를 가진 사람은 모두 같은 응답을 합니다.")
+    st.write(f"{len(sample):,}명 × {len(questions)}문항")
+    if st.button("응답 추정", type="primary"):
+        bar = st.progress(0.0, text="페르소나 문장 가져오는 중")
+        run_sample = with_personas(bar)
+        weights = wt_edit.rename(columns={"기준점": "intercept", **{v: k for k, v in labels.items()}})
+        st.session_state.responses = estimate_responses(run_sample, questions, codebook, weights, noise_sd)
+        save_meta()
+        bar.empty()
+elif mode == "upload":
     st.write("1) 응답 양식을 내려받아 각 문항 칸에 1~5 정수를 채우세요. 2) 채운 파일을 올리세요.")
     template = response_template(sample, questions)
     t1, t2 = st.columns(2)
@@ -251,14 +297,7 @@ else:
     st.write(f"{len(sample):,}명 × {len(questions)}문항, {unit}")
     if st.button("설문 시작", type="primary", disabled=(mode == "llm" and not has_key)):
         bar = st.progress(0.0, text="페르소나 문장 가져오는 중")
-        run_sample = sample
-        if mode == "llm" and "persona" not in sample:
-            try:
-                personas = load_personas(sample, progress=lambda d, t: bar.progress(
-                    d / t, text=f"페르소나 문장 가져오는 중 {d}/{t}"))
-                run_sample = sample.merge(personas, on="uuid", how="left")
-            except Exception as e:
-                st.warning(f"페르소나 문장을 가져오지 못해 인구통계 정보만으로 응답합니다({type(e).__name__}).")
+        run_sample = with_personas(bar) if mode == "llm" else sample
         bar.progress(0.0, text="응답 생성 중")
         st.session_state.responses = run_survey(
             run_sample, questions, mode=mode, model=model, effort=effort, workers=workers,
@@ -285,6 +324,12 @@ if valid.empty:
     st.stop()
 if mode == "demo":
     st.info("데모 모드 결과입니다. 수치는 파이프라인 점검용이며 의미가 없습니다.")
+cue_cols = [c for c in valid.columns if c.startswith("단서_")]
+if cue_cols:
+    no_text = valid["comment"].astype(str).str.startswith("(페르소나 텍스트 없음").sum()
+    st.info("코드북 추정 결과입니다. 페르소나 생활서사의 단서와 4단계 가중치로 만든 추정치이며, "
+            "실제 응답이 아닙니다. 집단 차이는 '이런 차이가 있을 수 있다'는 가설로 읽고 실제 조사로 확인하세요."
+            + (f" 페르소나 문장이 없는 {no_text}명은 인구통계만으로 추정했습니다." if no_text else ""))
 
 items = analysis.item_summary(valid, questions)
 st.subheader("문항별 응답 분포")
@@ -309,12 +354,33 @@ for by in compare_by:
                      width="stretch")
 st.caption(f"응답자가 {analysis.MIN_GROUP_N}명 미만인 집단은 검정에서 뺐습니다.")
 
+cue_sheets: dict[str, pd.DataFrame] = {}
+if cue_cols:
+    labels = cue_labels(load_codebook())
+    cues = valid[cue_cols].rename(columns=lambda c: c.removeprefix("단서_"))
+    st.subheader("생활서사 단서 분석")
+    cue_table = cue_summary(cues, labels)
+    st.dataframe(cue_table, hide_index=True, width="stretch")
+    fr = cue_friedman(cues)
+    if fr:
+        st.caption(f"단서 간 차이(Friedman 검정): χ²={fr['통계량']}, p={fr['p값']:.4f}. "
+                   "같은 사람이 여러 단서 점수를 가지므로 반복측정 검정을 썼습니다.")
+    cue_sheets["단서 통계"] = cue_table
+    named = cues.rename(columns=labels)
+    for by in compare_by:
+        table = analysis.group_compare(valid, named, by)
+        cue_sheets[f"단서비교_{COLUMN_LABELS.get(by, by)}"] = table
+        with st.expander(f"{COLUMN_LABELS.get(by, by)}별 단서 점수"):
+            st.dataframe(table, hide_index=True, width="stretch")
+    st.caption("표본이 크면 작은 차이도 유의하게 나오므로 p값보다 효과크기(d, η²)를 함께 보세요.")
+
 if "comment" in valid:
-    with st.expander("응답 이유 예시"):
+    with st.expander("응답 근거 예시" if cue_cols else "응답 이유 예시"):
         st.dataframe(valid[["sex", "age", "province", "education_level", "occupation", "comment"]].head(30),
                      hide_index=True, width="stretch")
 
 sheets = analysis.build_report(responses, questions, compare_by, st.session_state.get("meta"))
+sheets.update(cue_sheets)
 stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 d1, d2 = st.columns(2)
 d1.download_button("엑셀 보고서 내려받기", analysis.to_excel(sheets), f"survey_{stamp}.xlsx",
