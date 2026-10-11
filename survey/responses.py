@@ -29,7 +29,7 @@ def read_responses(file, sample: pd.DataFrame, qs: list[Question]) -> pd.DataFra
     vals = data[ids].apply(pd.to_numeric, errors="coerce")
     bad = vals.notna() & ~vals.isin([1, 2, 3, 4, 5])
     if bad.any().any():
-        raise ValueError(f"1~5 이외의 값이 있습니다: {', '.join(vals.columns[bad.any()])}")
+        raise ValueError(f"1–5 이외의 값이 있습니다: {', '.join(vals.columns[bad.any()])}")
     data[ids] = vals
     empty = vals.isna().all(axis=1)
     data["error"] = empty.map({True: "응답 없음", False: ""})

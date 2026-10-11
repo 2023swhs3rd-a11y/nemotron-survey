@@ -85,13 +85,13 @@ with st.sidebar:
     mode = st.radio("응답을 어떻게 만들까요?", list(MODES), format_func=MODES.get)
     api_key, model, effort, workers = env_key, DEFAULT_MODEL, "low", 8
     if mode == "codebook":
-        st.info("각 페르소나의 생활서사 문장에서 교육·진로 단서를 코드북으로 0~2점 매기고, "
+        st.info("각 페르소나의 생활서사 문장에서 교육·진로 단서를 코드북으로 0–2점 매기고, "
                 "단서 점수와 학력·연령으로 문항별 응답을 추정합니다. 실제 의견의 예측이 아니라 "
                 "가설을 세우기 위한 추정치입니다. 추정 규칙은 4단계에서 보고 고칠 수 있습니다.")
     elif mode == "demo":
         st.info("데모 응답은 화면과 통계 흐름 확인용입니다. 연구 결과로 쓰지 마세요.")
     elif mode == "upload":
-        st.info("4단계에서 응답 양식을 내려받아 1~5점을 채운 뒤 올리면 바로 통계를 냅니다. "
+        st.info("4단계에서 응답 양식을 내려받아 1–5점을 채운 뒤 올리면 바로 통계를 냅니다. "
                 "실제 응답자에게 받은 값이나 다른 도구로 만든 응답을 넣을 수 있습니다.")
     else:
         typed = st.text_input("Claude API 키", type="password", placeholder="sk-ant-api03-...",
@@ -261,9 +261,13 @@ if mode == "codebook":
         st.dataframe(pd.DataFrame([{"단서": v["label"], "정의": v["definition"], "키워드": ", ".join(v["keywords"])}
                                    for v in codebook["cues"].values()]), hide_index=True, width="stretch")
     with st.expander("추정 규칙: 문항별 가중치 (고칠 수 있음)"):
-        st.markdown("응답 = 기준점 + Σ(가중치 × 단서 점수 0~2) + Σ(가중치 × 인구통계 0/1) + 무작위 오차 → 1~5로 반올림. "
-                    "인구통계 항: `edu_high` 4년제 대학 이상, `young` 35세 미만, `old` 60세 이상. "
-                    "추가한 문항은 기준점 3, 가중치 0으로 시작하니 여기서 정해 주세요.")
+        st.markdown(
+            "**응답 = 기준점 + Σ(가중치 × 단서 점수) + Σ(가중치 × 인구통계 항) + 무작위 오차**, 결과를 1–5로 반올림합니다.\n"
+            "- 단서 점수는 0, 1, 2 중 하나입니다. 인구통계 항은 해당하면 1, 아니면 0입니다: "
+            "`edu_high` 4년제 대학 이상, `young` 35세 미만, `old` 60세 이상.\n"
+            "- 양수 가중치는 '그렇다' 쪽, 음수는 '그렇지 않다' 쪽으로 응답을 옮깁니다.\n"
+            "- 예) Q01에서 학업 관여 2점, 4년제 대학 졸업자: 3 + 0.5×2 + 0.4 = 4.4 → 오차를 더해 대체로 4점.\n"
+            "- 추가한 문항은 기준점 3, 가중치 0으로 시작하니 여기서 정해 주세요. 표의 칸을 눌러 바로 고칠 수 있습니다.")
         wt = weight_table(questions, codebook).rename(columns={"intercept": "기준점", **labels})
         wt_edit = st.data_editor(wt, width="stretch", key="weights_editor")
         noise_sd = st.slider("무작위 오차 크기(표준편차)", 0.0, 1.5, float(codebook.get("noise_sd", 0.7)), 0.1,
@@ -277,7 +281,7 @@ if mode == "codebook":
         save_meta()
         bar.empty()
 elif mode == "upload":
-    st.write("1) 응답 양식을 내려받아 각 문항 칸에 1~5 정수를 채우세요. 2) 채운 파일을 올리세요.")
+    st.write("1) 응답 양식을 내려받아 각 문항 칸에 1–5 정수를 채우세요. 2) 채운 파일을 올리세요.")
     template = response_template(sample, questions)
     t1, t2 = st.columns(2)
     t1.download_button("응답 양식 내려받기(엑셀)", analysis.to_excel({"응답": template}),
