@@ -47,9 +47,11 @@ Python 3.10 이상이 필요합니다(Claude Python SDK 1.x 요구 사항). 버�
 
 ```bash
 pip install -r requirements.txt
-export ANTHROPIC_API_KEY=sk-ant-...      # Claude 응답 모드에 필요
 streamlit run app.py
 ```
+
+Claude API 키는 앱 사이드바의 입력칸에 넣거나, 실행 전에 `export ANTHROPIC_API_KEY=sk-ant-...`로 지정합니다.
+키는 [Claude Console](https://console.anthropic.com)의 API Keys에서 발급합니다.
 
 처음 실행하면 Hugging Face에서 데이터(parquet)를 내려받아 캐시합니다. 이미 받아 둔 폴더가 있으면
 `NEMOTRON_DATA_DIR=/경로`로 지정하세요.

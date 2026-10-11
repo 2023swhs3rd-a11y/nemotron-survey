@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
@@ -122,20 +123,27 @@ def demo_answers(row: pd.Series, questions: list[Question]) -> dict:
 
 def run_survey(sample: pd.DataFrame, questions: list[Question], mode: str = "llm",
                model: str = DEFAULT_MODEL, effort: str = "low", workers: int = 8,
-               progress: Callable[[int, int], None] | None = None) -> pd.DataFrame:
+               progress: Callable[[int, int], None] | None = None,
+               api_key: str | None = None) -> pd.DataFrame:
     """표본 전체에 설문을 돌려 응답자×문항 표(넓은 형태)를 돌려준다."""
     client = None
     if mode == "llm":
         import anthropic
-        client = anthropic.Anthropic(max_retries=4)
+        client = anthropic.Anthropic(api_key=api_key, max_retries=4) if api_key else anthropic.Anthropic(max_retries=4)
+
+    stop = threading.Event()  # 키 오류처럼 모두 실패할 오류면 나머지 요청을 보내지 않는다
 
     def one(idx: int) -> dict:
         row = sample.iloc[idx]
+        if stop.is_set():
+            return {"uuid": row["uuid"], "comment": "", "error": "중단됨(앞선 인증·권한 오류)"}
         try:
             result = (ask_claude(client, row, questions, model, effort) if mode == "llm"
                       else demo_answers(row, questions))
             out = {"uuid": row["uuid"], **result["answers"], "comment": result["comment"], "error": ""}
         except Exception as e:  # 한 명 실패가 전체를 멈추지 않도록 기록만 남긴다
+            if type(e).__name__ in {"AuthenticationError", "PermissionDeniedError"}:
+                stop.set()
             out = {"uuid": row["uuid"], "comment": "", "error": f"{type(e).__name__}: {e}"}
         return out
 

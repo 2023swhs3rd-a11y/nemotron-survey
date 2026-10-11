@@ -60,20 +60,26 @@ st.caption("NVIDIA Nemotron-Personas-Korea 합성 페르소나 100만 명 중 �
 # ---------------- 사이드바: 응답 생성 설정 ----------------
 with st.sidebar:
     st.header("응답 생성 설정")
-    has_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    env_key = os.environ.get("ANTHROPIC_API_KEY", "")
     mode = st.radio(
-        "응답 방식", ["llm", "demo"], index=0 if has_key else 1,
+        "응답 방식", ["llm", "demo"], index=0 if env_key else 1,
         format_func=lambda m: "Claude가 페르소나로 응답" if m == "llm" else "데모(규칙 기반 임의 응답)",
     )
+    api_key = env_key
     if mode == "llm":
-        if not has_key:
-            st.warning("ANTHROPIC_API_KEY 환경변수를 설정해야 합니다.")
+        if not env_key:
+            api_key = st.text_input("Claude API 키", type="password", placeholder="sk-ant-...",
+                                    help="console.anthropic.com의 API Keys에서 발급합니다. "
+                                         "이 브라우저 세션에서만 쓰이고 저장되지 않습니다.").strip()
+            if not api_key:
+                st.warning("Claude API 키를 입력하세요.")
         model = st.selectbox("모델", MODEL_CHOICES, index=MODEL_CHOICES.index(DEFAULT_MODEL))
         effort = st.select_slider("추론 강도(effort)", ["low", "medium", "high"], value="low")
         workers = st.slider("동시 요청 수", 1, 32, 8)
     else:
         st.info("데모 응답은 화면과 통계 흐름 확인용입니다. 연구 결과로 쓰지 마세요.")
         model, effort, workers = DEFAULT_MODEL, "low", 8
+    has_key = bool(api_key)
 
 demo = get_demographics()
 
@@ -183,6 +189,7 @@ st.write(f"{len(sample):,}명 × {len(questions)}문항, 응답자당 요청 1�
 if st.button("설문 시작", type="primary", disabled=(mode == "llm" and not has_key)):
     bar = st.progress(0.0, text="응답 생성 중")
     responses = run_survey(sample, questions, mode=mode, model=model, effort=effort, workers=workers,
+                           api_key=api_key or None,
                            progress=lambda d, t: bar.progress(d / t, text=f"응답 생성 중 {d}/{t}"))
     st.session_state.responses = responses
     st.session_state.meta = pd.DataFrame({
@@ -200,7 +207,9 @@ if responses is None:
 st.header("5. 통계 결과")
 errors = responses[responses["error"].fillna("") != ""]
 if len(errors):
-    st.warning(f"{len(errors)}명은 응답 생성에 실패해 분석에서 뺐습니다.")
+    causes = errors.loc[~errors["error"].str.startswith("중단됨"), "error"]
+    first = causes.iloc[0] if len(causes) else errors["error"].iloc[0]
+    st.warning(f"{len(errors)}명은 응답 생성에 실패해 분석에서 뺐습니다. 원인: {first}")
 valid = responses[responses["error"].fillna("") == ""]
 q_ids = [q.id for q in questions if q.id in valid]
 questions = [q for q in questions if q.id in q_ids]
