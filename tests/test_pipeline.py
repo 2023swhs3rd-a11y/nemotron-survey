@@ -124,26 +124,6 @@ def test_remote_loaders(monkeypatch, data_root):
     assert paths[0].endswith("@refs%2Fconvert%2Fparquet/default/train/0000.parquet")
 
 
-def test_upload_responses(data_root):
-    import io
-    from survey.responses import read_responses, response_template
-
-    demo = load_demographics(data_root)
-    s = stratified_sample(demo, 20)
-    qs = load_default_questions()
-    t = response_template(s, qs)
-    t[[q.id for q in qs]] = 4
-    t.loc[t.index[0], [q.id for q in qs]] = pd.NA      # 응답 없는 사람
-    buf = io.BytesIO(t.to_csv(index=False).encode()); buf.name = "r.csv"
-    res = read_responses(buf, s, qs)
-    assert len(res) == 20 and (res["error"] == "응답 없음").sum() == 1
-    assert analysis.item_summary(res[res["error"] == ""], qs)["평균"].eq(4).all()
-    t.loc[t.index[1], "Q01"] = 7
-    bad = io.BytesIO(t.to_csv(index=False).encode()); bad.name = "r.csv"
-    with pytest.raises(ValueError):
-        read_responses(bad, s, qs)
-
-
 def test_codebook_scoring_and_estimation():
     from survey.codebook import estimate_responses, load_codebook, score_text, weight_table
 

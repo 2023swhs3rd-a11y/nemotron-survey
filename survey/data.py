@@ -44,7 +44,8 @@ AGE_LABELS = ["19-29세", "30대", "40대", "50대", "60대", "70세 이상"]
 # 데이터 출처
 #  - 로컬: NEMOTRON_DATA_DIR 폴더의 parquet 파일
 #  - 원격(기본): Hugging Face가 제공하는 parquet 변환본에서 필요한 열만 범위 요청으로 읽는다(전체 2GB를 받지 않음).
-#    표본 페르소나 텍스트는 Hugging Face datasets-server의 /rows API로 행 번호를 지정해 가져온다.
+#    표본 페르소나 텍스트는 Hugging Face datasets-server의 /filter API로 uuid를 지정해 가져오고,
+#    실패한 사람만 /rows API로 행 번호를 지정해 다시 가져온다.
 PARQUET_REVISION = "refs%2Fconvert%2Fparquet"
 DATASETS_SERVER = "https://datasets-server.huggingface.co"
 USER_AGENT = "nemotron-survey/1.0 (+https://github.com/2023swhs3rd-a11y/nemotron-survey)"
@@ -110,7 +111,7 @@ def load_demographics(root: Path | None = None) -> pd.DataFrame:
             with fs.open(path, "rb", block_size=8 * 1024 * 1024) as f:
                 return pq.read_table(f, columns=DEMOGRAPHIC_COLUMNS).to_pandas()
 
-        with ThreadPoolExecutor(max_workers=4) as pool:
+        with ThreadPoolExecutor(max_workers=len(paths)) as pool:  # 파일마다 동시에 읽는다
             parts = list(pool.map(read, paths))
         df = pd.concat(parts, ignore_index=True)
     df.insert(0, "row_idx", range(len(df)))
@@ -133,7 +134,7 @@ def _fetch_by_uuid(uuids: list[str]) -> list[dict]:
     return [{c: r["row"].get(c) for c in PERSONA_COLUMNS} for r in data.get("rows", [])]
 
 
-def load_personas(sample: pd.DataFrame, root: Path | None = None, workers: int = 6,
+def load_personas(sample: pd.DataFrame, root: Path | None = None, workers: int = 8,
                   progress: Callable[[int, int], None] | None = None) -> pd.DataFrame:
     """표본으로 뽑힌 사람들의 페르소나 텍스트만 읽는다."""
     root = root or local_dir()
@@ -196,8 +197,9 @@ class PopulationFilter:
         for col in ["sex", "province", "district", "education_level", "marital_status",
                     "housing_type", "family_type", "bachelors_field"]:
             values = getattr(self, col)
-            if values:
-                mask &= df[col].astype(str).isin(values)
+            if values:  # 범주형 열은 문자열로 바꾸지 않고 바로 비교한다(100만 행에서 수십 배 빠름)
+                column = df[col] if isinstance(df[col].dtype, pd.CategoricalDtype) else df[col].astype(str)
+                mask &= column.isin(values)
         if self.occupation_keyword.strip():
             keywords = [k.strip() for k in self.occupation_keyword.split(",") if k.strip()]
             pattern = "|".join(keywords)
@@ -210,7 +212,17 @@ class PopulationFilter:
                     "housing_type", "family_type", "bachelors_field"]:
             values = getattr(self, col)
             if values:
-                parts.append(f"{COLUMN_LABELS[col]}: {', '.join(values)}")
+                parts.append(f"{COLUMN_LABELS[col]}: {', '.join(v or '(해당 없음)' for v in values)}")
         if self.occupation_keyword.strip():
             parts.append(f"직업 키워드: {self.occupation_keyword}")
         return " / ".join(parts)
+
+
+def filter_options(df: pd.DataFrame) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """필터 화면에 쓸 선택지(열별 값 목록)와 시도별 시군구 목록. 한 번만 계산해 두고 쓴다."""
+    cols = ["sex", "province", "district", "education_level", "marital_status",
+            "housing_type", "family_type", "bachelors_field"]
+    opts = {c: sorted(str(v) for v in df[c].dropna().unique()) for c in cols}
+    pairs = df[["province", "district"]].drop_duplicates().dropna()
+    districts = {str(p): sorted(g["district"].astype(str).unique()) for p, g in pairs.groupby("province", observed=True)}
+    return opts, districts
