@@ -35,6 +35,9 @@ def test_filter_and_stratified_sample(data_root):
     share_pop = pop["province"].value_counts(normalize=True)
     share_s = s["province"].value_counts(normalize=True)
     assert (share_pop - share_s).abs().max() < 0.02
+    one = PopulationFilter(sex=["남자"], province=["서울"]).apply(demo)  # 층 기준이 하나만 남는 경우
+    assert len(stratified_sample(one, 100)) == 100
+    assert len(stratified_sample(pop, 150, ["province"])) == 150
     personas = load_personas(s["uuid"].head(5).tolist(), data_root)
     assert len(personas) == 5 and "persona" in personas
 

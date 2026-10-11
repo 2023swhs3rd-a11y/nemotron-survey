@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 from scipy import stats
 
@@ -71,20 +72,23 @@ def stratified_sample(df: pd.DataFrame, n: int, strata: list[str] | None = None,
     if not strata:
         return df.sample(n=n, random_state=seed)
 
-    sizes = df.groupby(strata, observed=True).size()
+    # 층 번호로 묶어서 인덱스 키 형태(튜플 여부)에 상관없이 배분한다
+    gid = df.groupby(strata, observed=True, dropna=False).ngroup()
+    sizes = gid.value_counts().sort_index()
     quota = sizes / sizes.sum() * n
-    alloc = quota.apply(math.floor)
+    alloc = np.floor(quota).astype(int)
     remainder = int(n - alloc.sum())
     if remainder > 0:
-        order = (quota - alloc).sort_values(ascending=False).index[:remainder]
+        order = (quota - alloc).sort_values(ascending=False, kind="stable").index[:remainder]
         alloc.loc[order] += 1
 
-    parts = []
-    for key, group in df.groupby(strata, observed=True):
-        k = int(alloc.get(key, 0))
+    rng = np.random.default_rng(seed)
+    picked = []
+    for g, k in alloc.items():
         if k > 0:
-            parts.append(group.sample(n=min(k, len(group)), random_state=seed))
-    return pd.concat(parts).sample(frac=1, random_state=seed).reset_index(drop=True)
+            members = gid.index[gid.to_numpy() == g]
+            picked.extend(rng.choice(members, size=min(k, len(members)), replace=False))
+    return df.loc[picked].sample(frac=1, random_state=seed).reset_index(drop=True)
 
 
 def compare_distribution(population: pd.DataFrame, sample: pd.DataFrame,
