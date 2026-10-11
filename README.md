@@ -4,11 +4,25 @@ NVIDIA의 한국인 합성 페르소나 100만 명([nvidia/Nemotron-Personas-Kor
 원하는 인구집단을 골라, 대학교육과 진로교육에 대한 가치관·태도·의견을 묻는 **리커트 5점 척도 설문**을 가상으로 실시하고
 결과를 바로 통계 처리하는 웹 대시보드입니다.
 
-- 웹 주소: https://nemotron-survey-korea.streamlit.app
-- 설치 없이 브라우저에서 바로 쓸 수 있고, 이 저장소의 `main` 브랜치에 올린 변경이 자동으로 반영됩니다.
+누구나 아래 체험판에서 바로 써 볼 수 있고, 저장소를 복제(Fork)해 **자기 연구 주제·문항·코드북에 맞춘 버전**을
+무료로 배포할 수 있도록 만들었습니다.
 
 > **해석 원칙**: 합성 페르소나의 가상 응답은 실제 여론이 아닙니다. 설문지 사전 점검, 문항 개선, 집단 간 차이에 대한
 > 가설 탐색에 쓰고, 결론은 실제 조사로 확인하세요.
+
+## 어떻게 쓸 수 있나요
+
+| 목적 | 방법 | 필요한 것 |
+|---|---|---|
+| 한번 써 보기 | [공용 체험판](https://nemotron-survey-korea.streamlit.app) 접속 | 브라우저 |
+| 내 문항·코드북으로 계속 쓰기 | [내 버전 만들기](#내-버전-만들기)대로 Fork 후 Streamlit Cloud에 배포 | GitHub 계정 |
+| 대량 실행·자동화 | [내 컴퓨터에서 실행](#내-컴퓨터에서-실행) 후 명령줄 사용 | Python 3.10+ |
+
+**공용 체험판 이용 시 알아 둘 점**
+- 여러 사람이 함께 쓰는 무료 서버입니다. 한동안 접속이 없으면 잠들어 첫 화면이 뜨는 데 시간이 걸릴 수 있습니다.
+- 사용자 사이에 공유되거나 서버에 저장되는 것은 없습니다. 추가한 문항, 고친 가중치, 결과는 내 브라우저 세션에만 있으니
+  필요한 것은 JSON·엑셀·CSV로 내려받아 두세요.
+- 기본 문항·코드북·가중치를 바꿔 두고 계속 쓰려면 내 버전을 만드는 것이 맞습니다.
 
 ## 사용 순서
 
@@ -75,7 +89,7 @@ NVIDIA의 한국인 합성 페르소나 100만 명([nvidia/Nemotron-Personas-Kor
 척도: 1 전혀 그렇지 않다 · 2 그렇지 않다 · 3 보통이다 · 4 그렇다 · 5 매우 그렇다. 역문항(Q04)은 영역 점수를 낼 때 6−점수로 바꿉니다.
 
 **문항 추가**: 3단계 "문항 추가하기"에서 넣습니다. 추가 문항은 브라우저 세션 동안 유지되며 JSON으로 내려받았다가 다시 불러올 수 있습니다.
-모든 사용자에게 기본으로 보이게 하려면 내려받은 `custom_questions.json`을 저장소 최상위에 올리세요. 기본 문항은 `survey/questions.json`에서 고칩니다.
+내 버전에서 모든 접속자에게 기본으로 보이게 하려면 [내 버전 만들기](#내-버전-만들기)의 3번을 보세요.
 
 ## 통계 처리
 
@@ -95,18 +109,39 @@ NVIDIA의 한국인 합성 페르소나 100만 명([nvidia/Nemotron-Personas-Kor
   가져오지 못한 사람은 인구통계만으로 추정하고 화면에 그 수를 알려 줍니다.
 - parquet 파일을 받아 둔 폴더가 있으면 `NEMOTRON_DATA_DIR=/경로`로 로컬 파일을 씁니다.
 
-## 배포 (Streamlit Community Cloud)
+## 내 버전 만들기
 
-1. https://share.streamlit.io 에 GitHub 계정으로 로그인합니다.
-2. **Create app → Deploy a public app from GitHub**에서 Repository `2023swhs3rd-a11y/nemotron-survey`, Branch `main`, Main file path `app.py`를 입력합니다.
-3. Advanced settings에서 Python 3.12를 고르고 **Deploy**를 누릅니다. Claude 방식을 쓰려면 같은 곳의 Secrets에 `ANTHROPIC_API_KEY = "sk-ant-..."`를 넣습니다.
+코드를 몰라도 GitHub 웹 화면에서 끝낼 수 있습니다. 비용은 들지 않습니다(Claude 방식을 켤 때만 API 사용료).
+
+1. **Fork**: 이 저장소 오른쪽 위 **Fork**를 눌러 내 계정으로 복제합니다.
+2. **배포**: https://share.streamlit.io 에 GitHub 계정으로 로그인 → **Create app → Deploy a public app from GitHub**
+   → Repository `내계정/nemotron-survey`, Branch `main`, Main file path `app.py`를 넣습니다.
+   App URL에 원하는 주소(예: `my-career-survey`)를 정하고 **Deploy**를 누르면 몇 분 뒤 `https://my-career-survey.streamlit.app`이 열립니다.
+3. **내 연구에 맞게 고치기**: 내 저장소에서 파일을 열고 연필(✏️) 아이콘으로 고친 뒤 Commit하면 앱에 자동 반영됩니다.
+
+   | 바꾸고 싶은 것 | 파일 |
+   |---|---|
+   | 기본 문항·척도·영역 | `survey/questions.json` |
+   | 접속자 모두에게 보일 추가 문항 | 앱 3단계에서 내려받은 `custom_questions.json`을 저장소 최상위에 업로드 |
+   | 단서 정의·키워드, 문항별 가중치, 오차 크기 | `survey/codebook.json` |
+   | 제목·안내 문구 | `app.py` 상단의 `st.title`, `st.caption` |
+
+   문항 ID(Q01 등)를 바꾸거나 새 문항을 넣으면 `codebook.json`의 `weights`에도 같은 ID로 가중치를 넣어야 코드북 추정에 반영됩니다.
+   다른 주제(예: 건강 행동, 소비 태도)로 바꿀 때는 문항과 코드북 단서를 함께 새로 짜면 나머지(표본·통계·보고서)는 그대로 쓸 수 있습니다.
+4. **(선택) Claude 응답 켜기**: Streamlit 앱의 **Settings → Secrets**에 `.streamlit/secrets.toml.example`처럼
+   `ANTHROPIC_API_KEY = "sk-ant-..."`를 넣으면 사이드바에 Claude 방식이 나타납니다. 공개 앱에 키를 넣으면 접속자 모두가
+   그 키의 사용료로 실행하게 되므로, 키 없이 `ENABLE_CLAUDE = "1"`만 넣어 각 사용자가 자기 키를 입력하게 하는 편이 안전합니다.
+5. **원본 업데이트 받기**: 내 저장소 화면의 **Sync fork** 버튼으로 이 저장소의 개선 사항을 가져올 수 있습니다.
+   같은 파일을 고쳤다면 충돌을 직접 정리해야 하니, 가능하면 문항·코드북 JSON만 고치는 것을 권합니다.
+
+Python 버전은 Advanced settings에서 3.12를 권장합니다(3.10 이상이면 동작).
 
 ## 내 컴퓨터에서 실행
 
 Python 3.10 이상(3.12~3.13 권장)이 필요합니다.
 
 ```bash
-git clone https://github.com/2023swhs3rd-a11y/nemotron-survey
+git clone https://github.com/내계정/nemotron-survey   # Fork한 저장소, 또는 이 저장소 주소
 cd nemotron-survey
 python3 -m pip install -r requirements.txt
 python3 -m streamlit run app.py
@@ -141,13 +176,32 @@ survey/codebook.py      단서 점수화, 응답 추정, 단서 통계
 survey/responses.py     응답 양식과 업로드 파일 검사
 survey/simulate.py      데모 응답, Claude 응답
 survey/analysis.py      기술통계, 신뢰도, 집단 비교, 엑셀 보고서
+.streamlit/             Secrets 예시
 tests/                  테스트와 가짜 데이터 생성기
 ```
 
 테스트: `python3 -m pytest -q`
+
+## 연구에 활용할 때
+
+- 엑셀 보고서의 '설정' 시트에 대상 조건·표본 수·표본 시드·응답 방식이, 코드북 방식이면 '추정 규칙' 시트에
+  실제로 쓴 가중치와 오차 크기가 저장됩니다. 같은 조건을 다시 넣으면 같은 결과가 나옵니다.
+- 결과를 보고할 때는 합성 데이터 기반 가상 응답임을 밝히고, 표본 조건(모집단 필터·표본 수·시드), 응답 방식,
+  코드북 가중치를 같이 적어 재현할 수 있게 하세요.
+- 데이터 출처는 CC-BY-4.0 조건에 따라 표시해야 합니다. 예) NVIDIA. Nemotron-Personas-Korea. Hugging Face.
+- 방법을 인용할 때는 아래 참고 문헌의 유승철·임승희(2026)를 함께 밝혀 주세요.
+
+## 기여
+
+문항 제안, 키워드 보강(실제 페르소나 문장에서 단서가 잘 안 잡히는 경우 등), 버그 신고는 Issues에,
+코드 개선은 Pull request로 보내 주세요.
 
 ## 참고 문헌
 
 - 유승철·임승희 (2026). 소비자 합성 페르소나 데이터를 활용한 생활서사 기반 광고 전략 탐색: 식품·관광·건강 카테고리를 중심으로. *광고연구*, 149, 87–. https://doi.org/10.16914/ar.2026.149.87
 - 이건호·임미자 (2026). 빅데이터 분석과 LLM 모델을 이용한 고객 페르소나 시나리오 개발 및 마케팅 활용 방안에 관한 연구. *대한경영학회지*, 39(1), 45–78. https://doi.org/10.18032/kaaba.2026.39.1.45
 - NVIDIA. Nemotron-Personas-Korea. Hugging Face, CC-BY-4.0.
+
+## 라이선스
+
+코드는 [MIT 라이선스](LICENSE)입니다. 데이터셋은 NVIDIA의 CC-BY-4.0 조건을 따릅니다.

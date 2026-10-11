@@ -4,3 +4,4 @@ outputs/*
 !outputs/.gitkeep
 mock_data/
 .env
+.streamlit/secrets.toml

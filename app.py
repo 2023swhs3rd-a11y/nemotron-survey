@@ -62,6 +62,8 @@ def likert_chart(summary: pd.DataFrame, scale: dict[int, str]) -> go.Figure:
     return fig
 
 
+REPO_URL = "https://github.com/2023swhs3rd-a11y/nemotron-survey"
+
 st.title("대학·진로교육 인식 가상 설문")
 st.caption("NVIDIA Nemotron-Personas-Korea 합성 페르소나 100만 명 중 원하는 인구집단을 골라 "
            "리커트 5점 척도 설문을 시뮬레이션하고 바로 통계를 냅니다.")
@@ -103,6 +105,15 @@ with st.sidebar:
         model = st.selectbox("모델", MODEL_CHOICES, index=MODEL_CHOICES.index(DEFAULT_MODEL))
         effort = st.select_slider("추론 강도(effort)", ["low", "medium", "high"], value="low")
         workers = st.slider("동시 요청 수", 1, 32, 8)
+
+    st.divider()
+    st.markdown(
+        "**이용 안내**\n"
+        "- 합성 페르소나의 가상 응답이므로 실제 여론이 아닙니다. 문항 점검과 가설 탐색에 쓰세요.\n"
+        "- 추가 문항, 고친 가중치, 결과는 이 브라우저 세션에만 남고 다른 사람과 공유되지 않습니다. "
+        "필요한 것은 내려받아 두세요.\n"
+        f"- 내 문항·코드북으로 계속 쓰려면 [저장소]({REPO_URL})를 Fork해 내 버전을 배포하세요. "
+        f"방법은 [README]({REPO_URL}#내-버전-만들기)에 있습니다.")
     has_key = bool(api_key)
 
 demo = get_demographics()
@@ -227,11 +238,13 @@ if sample is None:
 if not questions:
     st.warning("문항을 하나 이상 고르세요.")
     st.stop()
-def save_meta() -> None:
+def save_meta(rules: pd.DataFrame | None = None) -> None:
+    """엑셀 '설정' 시트에 실행 조건을, 코드북 방식이면 '추정 규칙' 시트에 쓴 가중치를 남긴다."""
+    st.session_state.rules = rules
     st.session_state.meta = pd.DataFrame({
-        "항목": ["실행 시각", "응답 방식", "모델", "effort", "대상 조건", "모집단 수", "표본 수", "문항"],
+        "항목": ["실행 시각", "응답 방식", "모델", "effort", "대상 조건", "모집단 수", "표본 수", "표본 시드", "문항"],
         "값": [datetime.now().isoformat(timespec="seconds"), MODES[mode], model if mode == "llm" else "-",
-              effort if mode == "llm" else "-", flt.describe(), f"{len(population):,}", len(sample),
+              effort if mode == "llm" else "-", flt.describe(), f"{len(population):,}", len(sample), int(seed),
               ", ".join(q.id for q in questions)],
     })
 
@@ -278,7 +291,7 @@ if mode == "codebook":
         run_sample = with_personas(bar)
         weights = wt_edit.rename(columns={"기준점": "intercept", **{v: k for k, v in labels.items()}})
         st.session_state.responses = estimate_responses(run_sample, questions, codebook, weights, noise_sd)
-        save_meta()
+        save_meta(wt_edit.assign(**{"오차 표준편차": noise_sd}))
         bar.empty()
 elif mode == "upload":
     st.write("1) 응답 양식을 내려받아 각 문항 칸에 1–5 정수를 채우세요. 2) 채운 파일을 올리세요.")
@@ -385,6 +398,8 @@ if "comment" in valid:
 
 sheets = analysis.build_report(responses, questions, compare_by, st.session_state.get("meta"))
 sheets.update(cue_sheets)
+if st.session_state.get("rules") is not None:
+    sheets["추정 규칙"] = st.session_state.rules.reset_index()
 stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 d1, d2 = st.columns(2)
 d1.download_button("엑셀 보고서 내려받기", analysis.to_excel(sheets), f"survey_{stamp}.xlsx",
