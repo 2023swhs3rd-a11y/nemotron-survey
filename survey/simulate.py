@@ -136,13 +136,14 @@ def run_survey(sample: pd.DataFrame, questions: list[Question], mode: str = "llm
     def one(idx: int) -> dict:
         row = sample.iloc[idx]
         if stop.is_set():
-            return {"uuid": row["uuid"], "comment": "", "error": "중단됨(앞선 인증·권한 오류)"}
+            return {"uuid": row["uuid"], "comment": "", "error": "중단됨(앞선 인증·권한·크레딧 오류)"}
         try:
             result = (ask_claude(client, row, questions, model, effort) if mode == "llm"
                       else demo_answers(row, questions))
             out = {"uuid": row["uuid"], **result["answers"], "comment": result["comment"], "error": ""}
         except Exception as e:  # 한 명 실패가 전체를 멈추지 않도록 기록만 남긴다
-            if type(e).__name__ in {"AuthenticationError", "PermissionDeniedError"}:
+            if (type(e).__name__ in {"AuthenticationError", "PermissionDeniedError"}
+                    or "credit balance" in str(e)):
                 stop.set()
             out = {"uuid": row["uuid"], "comment": "", "error": f"{type(e).__name__}: {e}"}
         return out
