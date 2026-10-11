@@ -1,7 +1,7 @@
 """명령줄에서 가상 설문을 한 번에 돌리고 엑셀 보고서를 outputs/에 저장한다.
 
-예) 서울·경기 20대 대졸 이상, 성별·연령대 비교, Claude 응답:
-    python cli.py --age 19 29 --province 서울 경기 --education "4년제 대학교" --compare sex age_group
+예) 서울·경기 19~29세, 성별·연령대 비교, 생활서사 코드북 추정:
+    python cli.py --age 19 29 --province 서울 경기 --compare sex age_group
 """
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from pathlib import Path
 import pandas as pd
 
 from survey import analysis
+from survey.codebook import estimate_responses, load_codebook
 from survey.data import PopulationFilter, load_demographics, load_personas
 from survey.questions import load_all_questions
 from survey.sampling import plan_sample_size, stratified_sample
@@ -29,7 +30,8 @@ def main() -> None:
     p.add_argument("--margin", type=float, default=0.05)
     p.add_argument("--compare", nargs="*", default=["sex", "age_group"])
     p.add_argument("--strata", nargs="*", default=["sex", "age_group", "province"])
-    p.add_argument("--mode", choices=["llm", "demo"], default="llm")
+    p.add_argument("--mode", choices=["codebook", "demo", "llm"], default="codebook",
+                   help="codebook: 생활서사 코드북 추정(기본), demo: 규칙 기반 임의 응답, llm: Claude 응답")
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--effort", default="low")
     p.add_argument("--workers", type=int, default=8)
@@ -55,10 +57,13 @@ def main() -> None:
     sample = sample.merge(load_personas(sample), on="uuid", how="left")
     questions = load_all_questions()
     print(f"{len(sample):,}명 × {len(questions)}문항 응답 생성({a.mode})")
-    responses = run_survey(sample, questions, mode=a.mode, model=a.model, effort=a.effort,
-                           workers=a.workers,
-                           progress=lambda d, t: print(f"\r{d}/{t}", end="", flush=True))
-    print()
+    if a.mode == "codebook":
+        responses = estimate_responses(sample, questions, load_codebook())
+    else:
+        responses = run_survey(sample, questions, mode=a.mode, model=a.model, effort=a.effort,
+                               workers=a.workers,
+                               progress=lambda d, t: print(f"\r{d}/{t}", end="", flush=True))
+        print()
 
     meta = pd.DataFrame({"항목": ["실행 시각", "응답 방식", "모델", "대상 조건", "모집단 수", "표본 수"],
                          "값": [datetime.now().isoformat(timespec="seconds"), a.mode, a.model,
