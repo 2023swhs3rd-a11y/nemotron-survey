@@ -234,7 +234,9 @@ def with_personas(bar) -> pd.DataFrame:
 
 # ---------------- 1. 인구집단 선택 ----------------
 with st.container(border=True):
-    step(1, "조사 대상 인구집단", "모든 항목의 기본값은 '전체'입니다. 범위를 좁히려면 '전체'를 끄고 포함할 항목을 고르세요.")
+    step(1, "조사 대상 인구집단", "모든 항목의 기본값은 '전체'입니다. 범위를 좁히려면 '전체'를 끄고 포함할 항목을 고르세요. "
+                                "한 항목 안에서 여러 개를 고르면 <b>또는(OR)</b>, 서로 다른 항목끼리는 <b>그리고(AND)</b>로 묶습니다. "
+                                "예) 시도 서울·경기 + 성별 여자 = (서울 또는 경기)에 사는 여자.")
     a1, a2 = st.columns([3, 1], vertical_alignment="center")
     age = a1.slider("나이", 19, 99, (19, 99), format="%d세")
     metric_slot = a2.empty()
@@ -267,6 +269,15 @@ with st.container(border=True):
     if population.empty:
         st.warning("조건에 맞는 페르소나가 없습니다. 조건을 넓혀 보세요.")
         st.stop()
+    with st.expander("선택한 인구집단의 구성 확인"):
+        st.caption("데이터에 실제로 들어 있는 인원 수와 비율입니다. 합성 데이터라 현실 통계와 다를 수 있으니 "
+                   "조건이 그럴듯한 집단인지 여기서 확인하세요.")
+        comp_cols = st.columns(3)
+        for box, col in zip(comp_cols, ["education_level", "age_group", "province"]):
+            counts = population[col].value_counts()
+            counts = counts[counts > 0]
+            box.dataframe(pd.DataFrame({"인원": counts, "비율(%)": (counts / counts.sum() * 100).round(1)})
+                          .rename_axis(COLUMN_LABELS[col]), width="stretch")
 
 # ---------------- 2. 표본 크기 ----------------
 with st.container(border=True):
