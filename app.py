@@ -36,20 +36,25 @@ st.markdown("""<style>
 div[data-testid="stMetricValue"] {font-size: 1.7rem;}
 /* 상단 요약 막대: 스크롤해도 화면 위에 붙어 있다 */
 div[data-testid="stLayoutWrapper"]:has(> .st-key-summary_bar) {position: sticky; top: 3.75rem; z-index: 990;}
-.st-key-summary_bar {background: #ffffff;
-                     border: 1px solid #dfe5ee; border-radius: .6rem; padding: .7rem 1rem .8rem;
-                     box-shadow: 0 2px 8px rgba(28, 92, 171, .08);}
-.sb-row {display: flex; flex-wrap: wrap; gap: .4rem 1.6rem; align-items: baseline;}
-.sb-item {display: flex; flex-direction: column; min-width: 7.5rem;}
-.sb-label {font-size: .78rem; color: #6b7280;}
-.sb-value {font-size: 1.35rem; font-weight: 700; color: #1f2937; line-height: 1.3;}
-.sb-delta {font-size: .8rem; font-weight: 600; margin-left: .3rem;}
+.st-key-summary_bar {background: #ffffff; border: 1px solid #dfe5ee; border-radius: .7rem;
+                     padding: 1rem 1.3rem 1.1rem; box-shadow: 0 2px 10px rgba(28, 92, 171, .08);
+                     height: 9.5rem !important; justify-content: center;}  /* 높이 고정: 값이 바뀌어도 상자가 움직이지 않게 */
+.sb-row {display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1rem;}
+.sb-item {display: flex; flex-direction: column; min-width: 0;}
+.sb-label {font-size: .82rem; color: #6b7280; height: 1.2rem;}
+.sb-value {font-size: 1.45rem; font-weight: 700; color: #1f2937; line-height: 1.35; white-space: nowrap;
+           font-variant-numeric: tabular-nums;}
+.sb-delta {font-size: .8rem; font-weight: 600; height: 1.1rem; white-space: nowrap;}  /* 증감이 없어도 자리 유지 */
 .sb-up {color: #1a7f37;} .sb-down {color: #c7383a;}
-.sb-track {position: relative; height: .55rem; background: #e8edf5; border-radius: .3rem; margin-top: .55rem; overflow: hidden;}
+.sb-track {position: relative; height: .6rem; background: #e8edf5; border-radius: .3rem; margin-top: .9rem; overflow: hidden;}
 .sb-fill {position: absolute; left: 0; top: 0; bottom: 0; background: #1c5cab; border-radius: .3rem;}
 .sb-sample {position: absolute; left: 0; top: 0; bottom: 0; background: #f5a524; border-radius: .3rem;}
-.sb-legend {font-size: .75rem; color: #6b7280; margin-top: .3rem;}
-.sb-dot {display: inline-block; width: .6rem; height: .6rem; border-radius: 50%; margin: 0 .25rem 0 .6rem; vertical-align: -.05rem;}
+.sb-legend {font-size: .78rem; color: #6b7280; margin-top: .6rem; display: flex; gap: 1.2rem; align-items: center;}
+.sb-dot {display: inline-block; width: .65rem; height: .65rem; border-radius: 50%; margin-right: .35rem; vertical-align: -.05rem;}
+@media (max-width: 900px) {
+  .st-key-summary_bar {height: auto !important;}
+  .sb-row {grid-template-columns: repeat(3, minmax(0, 1fr));}
+}
 /* 고르는 버튼(pills)이 칸을 넘으면 옆 칸에 가려지지 않고 다음 줄로 넘어가게 */
 div[data-testid="stButtonGroup"] > div {flex-wrap: wrap; overflow: visible;}
 </style>""", unsafe_allow_html=True)
@@ -149,15 +154,16 @@ def _delta(key: str, value: int | None) -> str:
         st.session_state[f"sb_last_{key}"] = value
     d = st.session_state.get(f"sb_delta_{key}")
     if not d or value is None:
-        return ""
-    return f'<span class="sb-delta {"sb-up" if d > 0 else "sb-down"}">{"▲" if d > 0 else "▼"} {abs(d):,}</span>'
+        return '<span class="sb-delta">&nbsp;</span>'
+    return f'<span class="sb-delta {"sb-up" if d > 0 else "sb-down"}">{"▲" if d > 0 else "▼"} {abs(d):,} (직전 대비)</span>'
 
 
 def render_summary(slot, total: int, pop_n: int | None, recommended: int | None = None,
                    planned: int | None = None) -> None:
     """상단 요약 막대: 전체 → 대상 인원 → 권장·설정 표본, 그리고 전체 대비 비율 막대."""
-    def item(label: str, value: str, delta: str = "") -> str:
-        return f'<div class="sb-item"><span class="sb-label">{label}</span><span class="sb-value">{value}{delta}</span></div>'
+    def item(label: str, value: str, delta: str = '<span class="sb-delta">&nbsp;</span>') -> str:
+        return (f'<div class="sb-item"><span class="sb-label">{label}</span>'
+                f'<span class="sb-value">{value}</span>{delta}</div>')
 
     share = pop_n / total if pop_n and total else 0
     parts = [item("전체 페르소나", f"{total:,}명"),
@@ -167,12 +173,15 @@ def render_summary(slot, total: int, pop_n: int | None, recommended: int | None 
              item("설정한 표본", f"{planned:,}명" if planned else "—")]
     fill = max(share * 100, 0.6) if pop_n else 0
     sample_w = fill * (planned / pop_n) if planned and pop_n else 0
-    slot.markdown(
+    html = (
         f'<div class="sb-row">{"".join(parts)}</div>'
         f'<div class="sb-track"><div class="sb-fill" style="width:{fill:.2f}%"></div>'
         f'<div class="sb-sample" style="width:{max(sample_w, 0.4 if planned else 0):.2f}%"></div></div>'
-        f'<div class="sb-legend">막대 전체 = 100만 명<span class="sb-dot" style="background:#1c5cab"></span>대상 인원'
-        f'<span class="sb-dot" style="background:#f5a524"></span>설정한 표본</div>', unsafe_allow_html=True)
+        f'<div class="sb-legend"><span>막대 전체 = {total:,}명</span>'
+        f'<span><span class="sb-dot" style="background:#1c5cab"></span>대상 인원</span>'
+        f'<span><span class="sb-dot" style="background:#f5a524"></span>설정한 표본</span></div>')
+    st.session_state.summary_html = html  # 다음 실행 첫머리에 그대로 다시 그려 상자가 비지 않게
+    slot.markdown(html, unsafe_allow_html=True)
 
 
 REPO_URL = "https://github.com/2023swhs3rd-a11y/nemotron-survey"
@@ -248,6 +257,8 @@ st.caption("NVIDIA Nemotron-Personas-Korea 합성 페르소나 100만 명 중 �
 demo = get_demographics()
 opts, districts_by_province = get_options()
 summary_slot = st.container(key="summary_bar").empty()
+if "summary_html" in st.session_state:  # 새 값이 계산되기 전까지 직전 값을 보여 준다
+    summary_slot.markdown(st.session_state.summary_html, unsafe_allow_html=True)
 
 @st.cache_resource
 def prefetch_pool() -> ThreadPoolExecutor:
@@ -364,17 +375,17 @@ with st.container(border=True):
     sample = st.session_state.get("sample")
     if sample is not None:
         st.success(f"{len(sample):,}명을 뽑았습니다.")
-        e1, e2 = st.columns(2)
-        with e1.expander("모집단과 표본 구성 비교"):
-            for col in ["sex", "age_group", "province"]:
-                st.write(f"**{COLUMN_LABELS[col]}**")
-                st.dataframe(compare_distribution(population, sample, col), width="stretch")
-        with e2.expander("표본 미리 보기"):
+        with st.expander("모집단과 표본 구성 비교"):
+            for box, col in zip(st.columns(3), ["sex", "age_group", "province"]):
+                box.write(f"**{COLUMN_LABELS[col]}**")
+                box.dataframe(compare_distribution(population, sample, col), width="stretch")
+        with st.expander("표본 미리 보기(20명)"):
             preview = sample.head(20)
             if "persona" not in preview and st.checkbox("페르소나 설명 문장도 보기"):
                 with st.spinner("Hugging Face에서 페르소나 문장을 가져오는 중..."):
                     preview = with_personas(None).head(20)
-            st.dataframe(preview, hide_index=True)
+            st.dataframe(preview.drop(columns=["row_idx"], errors="ignore").rename(columns=COLUMN_LABELS),
+                         hide_index=True, width="stretch")
 
 # ---------------- 3. 문항 ----------------
 scale = load_scale()
