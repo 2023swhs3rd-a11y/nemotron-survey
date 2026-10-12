@@ -50,6 +50,9 @@ for _module in [m for n, m in list(sys.modules.items()) if n == "survey" or n.st
 st.set_page_config(page_title="대학·진로교육 인식 가상 설문", page_icon="🎓", layout="wide")
 st.markdown("""<style>
 .block-container {max-width: 1100px; padding-top: 2.5rem; padding-bottom: 4rem;}
+/* 한국어는 낱말 중간에서 줄을 바꾸지 않는다(긴 영문·숫자만 칸을 넘을 때 끊음) */
+.stApp, .stApp :is(p, li, label, h1, h2, h3, h4, [data-testid="stHeadingWithActionElements"])
+  {word-break: keep-all; overflow-wrap: break-word;}
 .step-title {display: flex; align-items: center; gap: .6rem; font-size: 1.3rem; font-weight: 700; margin: .1rem 0 .15rem;}
 .step-num {flex: none; width: 1.9rem; height: 1.9rem; border-radius: 50%; background: #1c5cab; color: #fff;
            display: inline-flex; align-items: center; justify-content: center; font-size: 1rem;}
@@ -58,8 +61,10 @@ st.markdown("""<style>
 div[data-testid="stMetricValue"] {font-size: 1.7rem;}
 /* 상단 요약 막대: 스크롤해도 화면 위에 붙어 있다 */
 /* 높이는 바깥 틀에 고정해야 적용된다(안쪽 상자는 틀 높이를 따라감). 값이 바뀌어도 상자가 움직이지 않게 */
+/* 상자 폭(container)에 맞춰 숫자 크기를 줄이고, 좁으면 핵심 3개만 보인다(휴대폰에서 숫자가 겹치지 않게) */
 div[data-testid="stLayoutWrapper"]:has(> .st-key-summary_bar) {position: sticky; top: 3.75rem; z-index: 990;
-                                                              height: 10.5rem; flex: none;}
+                                                              height: 10.5rem; flex: none;
+                                                              container-type: inline-size; container-name: summary;}
 .st-key-summary_bar {background: #ffffff; border: 1px solid #dfe5ee; border-radius: .7rem;
                      padding: 1.1rem 1.4rem; box-shadow: 0 2px 10px rgba(28, 92, 171, .08);
                      height: 100%; justify-content: center;}
@@ -70,19 +75,39 @@ div[data-testid="stLayoutWrapper"]:has(> .st-key-summary_bar) {position: sticky;
 .sb-row {display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1rem;}
 .sb-item {display: flex; flex-direction: column; min-width: 0;}
 .sb-label {font-size: .82rem; color: #6b7280; height: 1.2rem;}
-.sb-value {font-size: 1.45rem; font-weight: 700; color: #1f2937; line-height: 1.35; white-space: nowrap;
-           font-variant-numeric: tabular-nums;}
-.sb-delta {font-size: .8rem; font-weight: 600; height: 1.1rem; white-space: nowrap;}  /* 증감이 없어도 자리 유지 */
+.sb-value {font-size: clamp(1rem, 2.6cqi, 1.45rem); font-weight: 700; color: #1f2937; line-height: 1.35;
+           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums;}
+.sb-delta {font-size: .8rem; font-weight: 600; height: 1.1rem; white-space: nowrap;  /* 증감이 없어도 자리 유지 */
+           overflow: hidden; text-overflow: ellipsis;}
 .sb-up {color: #1a7f37;} .sb-down {color: #c7383a;}
 .sb-track {position: relative; height: .6rem; background: #e8edf5; border-radius: .3rem; margin-top: .9rem; overflow: hidden;}
 .sb-fill {position: absolute; left: 0; top: 0; bottom: 0; background: #1c5cab; border-radius: .3rem;}
 .sb-sample {position: absolute; left: 0; top: 0; bottom: 0; background: #f5a524; border-radius: .3rem;}
-.sb-legend {font-size: .78rem; color: #6b7280; margin-top: .7rem; display: flex; gap: 1.2rem; align-items: center;}
+.sb-legend {font-size: .78rem; color: #6b7280; margin-top: .7rem; display: flex; flex-wrap: wrap; gap: .3rem 1.2rem;
+            align-items: center;}
+.sb-legend > span {white-space: nowrap;}
 .sb-dot {display: inline-block; width: .65rem; height: .65rem; border-radius: 50%; margin-right: .35rem; vertical-align: -.05rem;}
-@media (max-width: 900px) {
-  div[data-testid="stLayoutWrapper"]:has(> .st-key-summary_bar) {height: auto;}
-  .sb-row {grid-template-columns: repeat(3, minmax(0, 1fr));}
+@container summary (max-width: 820px) {
+  .sb-note {display: none;}
 }
+@container summary (max-width: 560px) {
+  .sb-row {grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .6rem;}
+  .sb-total, .sb-rec {display: none;}
+  .sb-label {font-size: .72rem; height: 1.05rem;}
+  .sb-delta {font-size: .7rem; height: 1rem;}
+  .sb-track {margin-top: .5rem; height: .5rem;}
+  .sb-legend {font-size: .7rem; gap: .2rem .8rem; margin-top: .45rem;}
+}
+@media (max-width: 640px) {
+  div[data-testid="stLayoutWrapper"]:has(> .st-key-summary_bar) {height: auto; top: 3.25rem;}
+  .st-key-summary_bar {padding: .7rem .9rem;}
+  .step-desc {margin-left: 0;}
+  .step-title {font-size: 1.15rem;}
+}
+/* 휴대폰용 응답 분포 범례(그래프 밖에서 줄바꿈) */
+.lk-legend {display: flex; flex-wrap: wrap; gap: .25rem .9rem; font-size: .8rem; color: #4b5563; margin: .2rem 0 -.4rem;}
+.lk-legend span {white-space: nowrap;}
+.lk-legend i {display: inline-block; width: .7rem; height: .7rem; border-radius: 2px; margin-right: .3rem; vertical-align: -.05rem;}
 /* 고르는 버튼(pills)이 칸을 넘으면 옆 칸에 가려지지 않고 다음 줄로 넘어가게 */
 div[data-testid="stButtonGroup"] > div {flex-wrap: wrap; overflow: visible;}
 </style>""", unsafe_allow_html=True)
@@ -178,22 +203,40 @@ def make_report(run_id: str, q_ids: tuple[str, ...], compare_by: tuple[str, ...]
     return sheets, analysis.to_excel(sheets)
 
 
-def likert_chart(summary: pd.DataFrame, scale: dict[int, str]) -> go.Figure:
+def is_mobile() -> bool:
+    """휴대폰 브라우저인지(User-Agent). 그래프처럼 CSS로 줄일 수 없는 것만 이걸로 바꾼다."""
+    try:
+        ua = st.context.headers.get("User-Agent", "") or ""
+    except Exception:
+        return False
+    return "Mobi" in ua or "iPhone" in ua
+
+
+def likert_legend(scale: dict[int, str]) -> str:
+    return ('<div class="lk-legend">' + "".join(
+        f'<span><i style="background:{LIKERT_COLORS[k - 1]}"></i>{k} {scale[k]}</span>' for k in [1, 2, 3, 4, 5])
+        + "</div>")
+
+
+def likert_chart(summary: pd.DataFrame, scale: dict[int, str], compact: bool = False) -> go.Figure:
+    """compact: 휴대폰용. 좁은 화면에서 문항 내용이 잘리고 막대가 눌리지 않게 문항 번호만 쓰고 범례는 그래프 밖에 둔다."""
     fig = go.Figure()
-    labels = [f"{r['문항']} {r['내용'][:28]}…" if len(r["내용"]) > 28 else f"{r['문항']} {r['내용']}"
-              for _, r in summary.iterrows()]
+    labels = (list(summary["문항"]) if compact else
+              [f"{r['문항']} {r['내용'][:28]}…" if len(r["내용"]) > 28 else f"{r['문항']} {r['내용']}"
+               for _, r in summary.iterrows()])
     for k in [1, 2, 3, 4, 5]:
         vals = summary[f"{k}점(%)"]
         fig.add_bar(
             y=labels, x=vals, name=f"{k} {scale[k]}", orientation="h",
             marker=dict(color=LIKERT_COLORS[k - 1], line=dict(color="white", width=2)),
-            text=[f"{v:.0f}" if v >= 6 else "" for v in vals], textposition="inside",
+            text=[f"{v:.0f}" if v >= (12 if compact else 6) else "" for v in vals], textposition="inside",
             hovertemplate="%{y}<br>" + f"{k}점 {scale[k]}: " + "%{x:.1f}%<extra></extra>",
         )
-    fig.update_layout(barmode="stack", height=110 + 42 * len(summary), xaxis_title="응답 비율(%)",
-                      yaxis=dict(autorange="reversed"), legend=dict(orientation="h", traceorder="normal", x=0, y=1.0,
-                                  xanchor="left", yanchor="bottom"),
-                      margin=dict(l=10, r=10, t=60, b=10))
+    fig.update_layout(barmode="stack", height=(60 + 34 * len(summary)) if compact else (110 + 42 * len(summary)),
+                      xaxis_title="응답 비율(%)", yaxis=dict(autorange="reversed"), showlegend=not compact,
+                      legend=dict(orientation="h", traceorder="normal", x=0, y=1.0, xanchor="left", yanchor="bottom"),
+                      uniformtext=dict(minsize=9, mode="hide"),  # 칸이 좁아 글자가 너무 작아지면 숨긴다
+                      margin=dict(l=10, r=10, t=10 if compact else 60, b=10))
     return fig
 
 
@@ -207,21 +250,22 @@ def _delta(key: str, value: int | None) -> str:
     d = st.session_state.get(f"sb_delta_{key}")
     if not d or value is None:
         return '<span class="sb-delta">&nbsp;</span>'
-    return f'<span class="sb-delta {"sb-up" if d > 0 else "sb-down"}">{"▲" if d > 0 else "▼"} {abs(d):,} (직전 대비)</span>'
+    return (f'<span class="sb-delta {"sb-up" if d > 0 else "sb-down"}">{"▲" if d > 0 else "▼"} {abs(d):,}'
+            '<span class="sb-note"> (직전 대비)</span></span>')
 
 
 def render_summary(slot, total: int, pop_n: int | None, recommended: int | None = None,
                    planned: int | None = None) -> None:
     """상단 요약 막대: 전체 → 대상 인원 → 권장·설정 표본, 그리고 전체 대비 비율 막대."""
-    def item(label: str, value: str, delta: str = '<span class="sb-delta">&nbsp;</span>') -> str:
-        return (f'<div class="sb-item"><span class="sb-label">{label}</span>'
+    def item(label: str, value: str, delta: str = '<span class="sb-delta">&nbsp;</span>', cls: str = "") -> str:
+        return (f'<div class="sb-item {cls}"><span class="sb-label">{label}</span>'
                 f'<span class="sb-value">{value}</span>{delta}</div>')
 
     share = pop_n / total if pop_n and total else 0
-    parts = [item("전체 페르소나", f"{total:,}명"),
+    parts = [item("전체 페르소나", f"{total:,}명", cls="sb-total"),  # 좁은 화면에서는 범례의 '막대 전체'로 대신한다
              item("대상 인원", f"{pop_n:,}명" if pop_n is not None else "—", _delta("pop", pop_n)),
              item("전체 대비", f"{share:.1%}" if pop_n is not None else "—"),
-             item("권장 표본", f"{recommended:,}명" if recommended else "—", _delta("rec", recommended)),
+             item("권장 표본", f"{recommended:,}명" if recommended else "—", _delta("rec", recommended), "sb-rec"),
              item("설정한 표본", f"{planned:,}명" if planned else "—")]
     fill = max(share * 100, 0.6) if pop_n else 0
     sample_w = fill * (planned / pop_n) if planned and pop_n else 0
@@ -689,7 +733,12 @@ with st.container(border=True):
     tab_names = ["응답 분포", "문항 통계", "영역·신뢰도", "집단 비교"] + (["생활서사 단서"] if cue_cols else []) + ["내려받기"]
     tabs = dict(zip(tab_names, st.tabs(tab_names)))
     with tabs["응답 분포"]:
-        st.plotly_chart(likert_chart(items, scale), width="stretch", config={"displayModeBar": False})
+        compact = is_mobile()
+        if compact:
+            st.markdown(likert_legend(scale), unsafe_allow_html=True)
+        st.plotly_chart(likert_chart(items, scale, compact), width="stretch", config={"displayModeBar": False})
+        if compact:
+            st.caption("휴대폰 화면에서는 문항 번호만 표시합니다. 문항 내용은 '문항 통계' 탭에 있습니다.")
     with tabs["문항 통계"]:
         st.dataframe(items, hide_index=True, width="stretch")
     with tabs["영역·신뢰도"]:
