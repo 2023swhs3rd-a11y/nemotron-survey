@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
@@ -15,6 +16,21 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+
+def _forget_stale_survey_modules() -> None:
+    """Streamlit Cloud는 새 코드를 받아도 서버를 다시 켤 때까지 이미 불러온 survey 모듈을 그대로 쓴다.
+    그러면 새 app.py가 옛 모듈에서 새 함수를 찾다가 ImportError가 난다. 불러온 뒤 파일이 바뀐 모듈이 하나라도 있으면
+    survey 모듈을 모두 지워 아래 import가 새 코드로 다시 불러오게 한다."""
+    loaded = {n: m for n, m in sys.modules.items() if n == "survey" or n.startswith("survey.")}
+    for m in loaded.values():
+        path = getattr(m, "__file__", None)
+        if path and (not os.path.exists(path) or os.path.getmtime(path) != getattr(m, "_source_mtime", None)):
+            for name in loaded:
+                del sys.modules[name]
+            return
+
+
+_forget_stale_survey_modules()
 from survey import analysis
 from survey.codebook import (CODEBOOK_PATH, DEMO_TERMS, cue_friedman, cue_labels, cue_summary,
                              estimate_from_cues, estimate_responses, load_codebook, weight_table,
@@ -26,6 +42,10 @@ from survey.questions import (Question, load_custom_questions, load_default_ques
                               load_scale, next_custom_id)
 from survey.sampling import compare_distribution, plan_sample_size, stratified_sample
 from survey.simulate import DEFAULT_MODEL, MODEL_CHOICES, run_survey
+
+for _module in [m for n, m in list(sys.modules.items()) if n == "survey" or n.startswith("survey.")]:
+    if getattr(_module, "__file__", None) and not hasattr(_module, "_source_mtime"):
+        _module._source_mtime = os.path.getmtime(_module.__file__)  # 불러올 때의 파일 시각
 
 st.set_page_config(page_title="대학·진로교육 인식 가상 설문", page_icon="🎓", layout="wide")
 st.markdown("""<style>
