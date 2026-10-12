@@ -75,18 +75,26 @@ def scale_summary(df: pd.DataFrame, questions: list[Question]) -> tuple[pd.DataF
     return pd.DataFrame(rows).round(3), scores
 
 
+def _ordered_groups(col: pd.Series) -> pd.Series:
+    """집단 열을 문자열로 바꾸되, 순서가 있는 범주(연령대·학력)는 그 순서를 지킨다."""
+    if isinstance(col.dtype, pd.CategoricalDtype) and col.cat.ordered:
+        order = [str(c) for c in col.cat.categories]
+        return pd.Series(pd.Categorical(col.astype(str), categories=order, ordered=True), index=col.index)
+    return col.astype(str)
+
+
 def group_compare(df: pd.DataFrame, values: pd.DataFrame, by: str) -> pd.DataFrame:
     """`by` 집단별 평균과 차이 검정. values는 문항 점수 또는 영역 점수 열."""
-    groups = df[by].astype(str)
+    groups = _ordered_groups(df[by])
     counts = groups.value_counts()
     keep = counts[counts >= MIN_GROUP_N].index
     rows = []
     for col in values.columns:
         data = pd.DataFrame({"g": groups, "y": pd.to_numeric(values[col], errors="coerce")}).dropna()
         data = data[data["g"].isin(keep)]
-        samples = [d["y"].values for _, d in data.groupby("g")]
+        samples = [d["y"].values for _, d in data.groupby("g", observed=True)]
         row = {"항목": col}
-        for name, d in data.groupby("g"):
+        for name, d in data.groupby("g", observed=True):
             row[f"{name} (n={len(d)})"] = round(d["y"].mean(), 2)
         if len(samples) == 2:
             t = stats.ttest_ind(*samples, equal_var=False)
@@ -117,7 +125,8 @@ def group_compare(df: pd.DataFrame, values: pd.DataFrame, by: str) -> pd.DataFra
 def demographics_table(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     parts = []
     for col in columns:
-        vc = df[col].astype(str).value_counts()
+        vc = _ordered_groups(df[col]).value_counts()
+        vc = vc[vc > 0].sort_index() if isinstance(vc.index, pd.CategoricalIndex) else vc
         parts.append(pd.DataFrame({
             "변수": COLUMN_LABELS.get(col, col), "범주": vc.index,
             "명": vc.values, "%": (vc.values / vc.sum() * 100).round(1),

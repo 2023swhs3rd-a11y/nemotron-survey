@@ -39,6 +39,19 @@ COLUMN_LABELS = {
 
 AGE_BINS = [19, 30, 40, 50, 60, 70, 200]
 AGE_LABELS = ["19-29세", "30대", "40대", "50대", "60대", "70세 이상"]
+# 학력은 가나다순이 아니라 낮은 학력 → 높은 학력 순으로 보여 준다
+EDUCATION_ORDER = ["무학", "초등학교", "중학교", "고등학교", "2~3년제 전문대학", "4년제 대학교", "대학원"]
+
+
+def education_rank(value: str) -> tuple[int, str]:
+    """EDUCATION_ORDER에 없는 값(표기가 조금 다른 경우)은 비슷한 단어로 자리를 정하고, 그래도 없으면 맨 뒤."""
+    v = str(value)
+    if v in EDUCATION_ORDER:
+        return EDUCATION_ORDER.index(v), v
+    for i, key in reversed(list(enumerate(["무학", "초등", "중학", "고등", "전문대", "4년제", "대학원"]))):
+        if key in v:
+            return i, v
+    return len(EDUCATION_ORDER), v
 
 
 # 데이터 출처
@@ -92,6 +105,9 @@ def _compact(df: pd.DataFrame) -> pd.DataFrame:
     for col in CATEGORY_COLUMNS:
         if col in df:
             df[col] = df[col].astype("category")
+    if "education_level" in df:
+        levels = sorted(df["education_level"].cat.categories, key=education_rank)
+        df["education_level"] = df["education_level"].cat.reorder_categories(levels, ordered=True)
     df["age_group"] = pd.cut(df["age"], bins=AGE_BINS, labels=AGE_LABELS, right=False).astype("category")
     return df
 
@@ -222,7 +238,13 @@ def filter_options(df: pd.DataFrame) -> tuple[dict[str, list[str]], dict[str, li
     """필터 화면에 쓸 선택지(열별 값 목록)와 시도별 시군구 목록. 한 번만 계산해 두고 쓴다."""
     cols = ["sex", "province", "district", "education_level", "marital_status",
             "housing_type", "family_type", "bachelors_field"]
-    opts = {c: sorted(str(v) for v in df[c].dropna().unique()) for c in cols}
+    opts = {}
+    for c in cols:
+        present = set(df[c].dropna().unique())
+        if isinstance(df[c].dtype, pd.CategoricalDtype) and df[c].cat.ordered:  # 학력 등 순서가 있는 범주
+            opts[c] = [str(v) for v in df[c].cat.categories if v in present]
+        else:
+            opts[c] = sorted(str(v) for v in present)
     pairs = df[["province", "district"]].drop_duplicates().dropna()
     districts = {str(p): sorted(g["district"].astype(str).unique()) for p, g in pairs.groupby("province", observed=True)}
     return opts, districts

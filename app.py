@@ -81,7 +81,10 @@ def get_options() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
     return filter_options(get_demographics())
 
 
-PILLS_MAX = 20  # 선택지가 이보다 적으면 한눈에 보이는 버튼(pills), 많으면 검색되는 목록
+PILLS_MAX = 20
+PERSONA_TEXT_LABELS = {"persona": "요약", "professional_persona": "직업 서사", "family_persona": "가족 서사",
+                       "cultural_background": "성장 배경", "career_goals_and_ambitions": "커리어 목표",
+                       "skills_and_expertise": "역량", "hobbies_and_interests": "취미·관심사"}  # 선택지가 이보다 적으면 한눈에 보이는 버튼(pills), 많으면 검색되는 목록
 
 
 def choose(col: str, choices: list[str]) -> list[str] | None:
@@ -345,6 +348,8 @@ with st.container(border=True):
         for box, col in zip(comp_cols, ["education_level", "age_group", "province"]):
             counts = population[col].value_counts()
             counts = counts[counts > 0]
+            if population[col].cat.ordered:  # 학력·연령대는 낮은 순 → 높은 순
+                counts = counts.sort_index()
             box.dataframe(pd.DataFrame({"인원": counts, "비율(%)": (counts / counts.sum() * 100).round(1)})
                           .rename_axis(COLUMN_LABELS[col]), width="stretch",
                           column_config={"인원": st.column_config.NumberColumn(format="localized")})
@@ -370,8 +375,11 @@ with st.container(border=True):
                             format_func=lambda c: COLUMN_LABELS.get(c, c))
     render_summary(summary_slot, len(demo), len(population), plan.n_total, int(n))
     seed = k3.number_input("난수 시드", value=42, step=1, help="같은 값이면 같은 표본이 뽑힙니다.")
+    sample_signature = {"대상 조건": flt.describe(), "모집단 수": len(population), "표본 수": int(n),
+                        "층화 기준": ", ".join(COLUMN_LABELS.get(c, c) for c in strata), "표본 시드": int(seed)}
     if k4.button("표본 추출", type="primary", width="stretch"):
         st.session_state.sample = stratified_sample(population, int(n), strata, int(seed))
+        st.session_state.sample_info = sample_signature
         st.session_state.pop("responses", None)
         # 표본 추출은 바로 끝내고, 페르소나 문장은 문항을 고르는 동안 뒤에서 미리 받아 둔다
         st.session_state.prefetch = start_prefetch(st.session_state.sample)
@@ -383,13 +391,36 @@ with st.container(border=True):
             for box, col in zip(st.columns(3), ["sex", "age_group", "province"]):
                 box.write(f"**{COLUMN_LABELS[col]}**")
                 box.dataframe(compare_distribution(population, sample, col), width="stretch")
+        if st.session_state.get("sample_info") != sample_signature:
+            st.warning("표본을 뽑은 뒤 대상 조건이나 표본 설정이 바뀌었습니다. 지금 화면의 조건으로 조사하려면 "
+                       "'표본 추출'을 다시 누르세요. 그대로 두면 이전 조건으로 뽑은 표본을 씁니다.")
         with st.expander("표본 미리 보기(20명)"):
             preview = sample.head(20)
-            if "persona" not in preview and st.checkbox("페르소나 설명 문장도 보기"):
-                with st.spinner("Hugging Face에서 페르소나 문장을 가져오는 중..."):
-                    preview = with_personas(None).head(20)
-            st.dataframe(preview.drop(columns=["row_idx"], errors="ignore").rename(columns=COLUMN_LABELS),
-                         hide_index=True, width="stretch")
+            if "persona" not in preview:
+                st.caption("페르소나 설명 문장은 Hugging Face에서 받아 오므로 표시까지 수 초에서 수십 초 걸릴 수 있습니다. "
+                           "표본을 뽑는 순간부터 미리 받기 시작하니, 조금 뒤에 누르면 더 빨리 뜹니다.")
+                if st.checkbox("페르소나 설명 문장 보기"):
+                    with st.spinner("Hugging Face에서 페르소나 문장을 가져오는 중... (수십 초 걸릴 수 있음)"):
+                        preview = with_personas(None).head(20)
+            text_cols = [c for c in PERSONA_TEXT_LABELS if c in preview]
+            basic = [c for c in ["sex", "age", "province", "district", "education_level", "occupation",
+                                 "marital_status", "family_type", "housing_type"] if c in preview]
+            shown = preview[basic + text_cols].rename(columns={**COLUMN_LABELS, **PERSONA_TEXT_LABELS})
+            # 설명 문장 열을 넓게 잡아 표가 화면보다 넓어지면 가로 스크롤로 읽는다
+            st.dataframe(shown, hide_index=True, width="stretch", height=420,
+                         column_config={PERSONA_TEXT_LABELS[c]: st.column_config.TextColumn(width=480)
+                                        for c in text_cols})
+            if text_cols:
+                st.caption("설명 문장 열은 표를 옆으로 밀어(가로 스크롤, 트랙패드 좌우 또는 Shift+휠) 볼 수 있습니다. "
+                           "한 사람의 문장을 끝까지 읽으려면 아래에서 고르세요.")
+                pick = st.selectbox("한 명의 설명 문장 전체 읽기", range(len(preview)),
+                                    format_func=lambda i: f"{i + 1}. {preview.iloc[i]['sex']} · {preview.iloc[i]['age']}세 · "
+                                                          f"{preview.iloc[i]['province']} · {preview.iloc[i]['occupation']}")
+                person = preview.iloc[pick]
+                with st.container(border=True):
+                    for c in text_cols:
+                        if isinstance(person[c], str) and person[c].strip():
+                            st.markdown(f"**{PERSONA_TEXT_LABELS[c]}**  \n{person[c]}")
 
 # ---------------- 3. 문항 ----------------
 scale = load_scale()
@@ -444,12 +475,14 @@ def save_meta(rules: pd.DataFrame | None = None) -> None:
     """엑셀 '설정' 시트에 실행 조건을, 코드북 방식이면 '추정 규칙' 시트에 쓴 가중치를 남긴다."""
     st.session_state.rules = rules
     st.session_state.run_id = datetime.now().isoformat()  # 결과 표·보고서 캐시의 열쇠
+    info = st.session_state.get("sample_info") or {}  # 표본을 뽑을 때의 조건(지금 화면 조건과 다를 수 있음)
     st.session_state.meta = pd.DataFrame({
-        "항목": ["실행 시각", "응답 방식", "모델", "effort", "대상 조건", "모집단 수", "표본 수", "표본 시드", "문항"],
+        "항목": ["실행 시각", "응답 방식", "모델", "effort", *info, "문항"],
         "값": [datetime.now().isoformat(timespec="seconds"), MODES[mode], model if mode == "llm" else "-",
-              effort if mode == "llm" else "-", flt.describe(), f"{len(population):,}", len(sample), int(seed),
+              effort if mode == "llm" else "-", *[f"{v:,}" if isinstance(v, int) else v for v in info.values()],
               ", ".join(q.id for q in questions)],
     })
+    st.session_state.run_signature = run_signature
 
 
 with st.container(border=True):
@@ -485,6 +518,9 @@ with st.container(border=True):
         noise_sd = b1.slider("무작위 오차 크기(표준편차)", 0.0, 1.5, noise_sd, 0.1,
                              help="0이면 같은 단서를 가진 사람은 모두 같은 응답을 합니다.")
         b2.markdown(f"**{len(sample):,}명 × {len(questions)}문항**")
+        run_signature = {"표본": st.session_state.get("sample_info"), "방식": mode,
+                         "문항": [(q.id, q.text, q.reverse) for q in questions],
+                         "가중치": wt_edit.to_json(), "오차": noise_sd}
         if b3.button("응답 추정", type="primary", width="stretch"):
             bar = st.progress(0.0, text="페르소나 문장 가져오는 중")
             run_sample = with_personas(bar)
@@ -492,10 +528,13 @@ with st.container(border=True):
             st.session_state.responses = estimate_responses(run_sample, questions, codebook, weights, noise_sd)
             save_meta(wt_edit.assign(**{"오차 표준편차": noise_sd}))
             bar.empty()
+            st.toast("응답 추정을 마쳤습니다. 아래 5단계에서 결과를 보세요.")
     else:
         unit = "응답자당 요청 1회" if mode == "llm" else "규칙 기반 임의 응답"
         b1, b2 = st.columns([4, 1], vertical_alignment="bottom")
         b1.markdown(f"**{len(sample):,}명 × {len(questions)}문항** · {unit}")
+        run_signature = {"표본": st.session_state.get("sample_info"), "방식": mode,
+                         "문항": [(q.id, q.text, q.reverse) for q in questions]}
         if b2.button("설문 시작", type="primary", width="stretch", disabled=(mode == "llm" and not has_key)):
             bar = st.progress(0.0, text="페르소나 문장 가져오는 중")
             run_sample = with_personas(bar) if mode == "llm" else sample
@@ -505,6 +544,8 @@ with st.container(border=True):
                 api_key=api_key or None,
                 progress=lambda d, t: bar.progress(d / t, text=f"응답 생성 중 {d}/{t}"))
             save_meta()
+            bar.empty()
+            st.toast("응답을 만들었습니다. 아래 5단계에서 결과를 보세요.")
 
 responses = st.session_state.get("responses")
 if responses is None:
@@ -513,6 +554,9 @@ if responses is None:
 # ---------------- 5. 결과 ----------------
 with st.container(border=True):
     step(5, "통계 결과")
+    if st.session_state.get("run_signature") != run_signature:
+        st.warning("결과를 만든 뒤 표본·문항·응답 방식·추정 규칙 중 무언가 바뀌었습니다. 아래 결과는 이전 설정 기준입니다. "
+                   "지금 설정을 반영하려면 4단계 버튼을 다시 누르세요.")
     errors = responses[responses["error"].fillna("") != ""]
     if len(errors):
         causes = errors.loc[~errors["error"].str.startswith("중단됨"), "error"]
