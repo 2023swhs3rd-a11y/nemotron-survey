@@ -12,8 +12,9 @@ from pathlib import Path
 import pandas as pd
 
 from survey import analysis
-from survey.codebook import estimate_responses, load_codebook
+from survey.codebook import CODEBOOK_PATH, estimate_responses, load_codebook
 from survey.data import PopulationFilter, load_demographics, load_personas
+from survey.provenance import app_version, file_fingerprint
 from survey.questions import load_all_questions
 from survey.sampling import plan_sample_size, stratified_sample
 from survey.simulate import DEFAULT_MODEL, run_survey
@@ -43,7 +44,8 @@ def main() -> None:
                            district=a.district, education_level=a.education, marital_status=a.marital,
                            housing_type=a.housing, family_type=a.family, bachelors_field=a.field,
                            occupation_keyword=a.occupation)
-    population = flt.apply(load_demographics())
+    demographics = load_demographics()
+    population = flt.apply(demographics)
     print(f"대상: {flt.describe()} → {len(population):,}명")
     if population.empty:
         raise SystemExit("조건에 맞는 페르소나가 없습니다.")
@@ -70,6 +72,9 @@ def main() -> None:
             "층화 기준": ", ".join(a.strata), "표본 시드": a.seed}
     if a.mode == "llm":
         rows["모델"] = a.model
+    rows.update({"데이터 버전": demographics.attrs.get("data_source", "-"),
+                 "코드북 파일": f"codebook.json (지문 {file_fingerprint(CODEBOOK_PATH)})",
+                 "앱 버전": app_version()})
     meta = pd.DataFrame({"항목": list(rows), "값": [str(v) for v in rows.values()]})
     sheets = analysis.build_report(responses, questions, a.compare, meta)
     out = Path(a.out)

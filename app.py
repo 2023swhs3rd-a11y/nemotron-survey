@@ -16,10 +16,12 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from survey import analysis
-from survey.codebook import (cue_friedman, cue_labels, cue_summary, estimate_responses,
-                             load_codebook, weight_table)
-from survey.data import (COLUMN_LABELS, PopulationFilter, filter_options, load_demographics,
-                         load_personas)
+from survey.codebook import (CODEBOOK_PATH, DEMO_TERMS, cue_friedman, cue_labels, cue_summary,
+                             estimate_from_cues, estimate_responses, load_codebook, weight_table,
+                             zero_weights)
+from survey.data import (COLUMN_LABELS, PopulationFilter, dataset_revision, filter_options,
+                         load_demographics, load_personas)
+from survey.provenance import app_version, file_fingerprint
 from survey.questions import (Question, load_custom_questions, load_default_questions,
                               load_scale, next_custom_id)
 from survey.sampling import compare_distribution, plan_sample_size, stratified_sample
@@ -126,11 +128,22 @@ def step(num: int, title: str, desc: str = "") -> None:
 @st.cache_data(max_entries=8, show_spinner="통계표와 보고서를 만드는 중...")
 def make_report(run_id: str, q_ids: tuple[str, ...], compare_by: tuple[str, ...], _responses: pd.DataFrame,
                 _questions: list[Question], _meta: pd.DataFrame | None,
-                _rules: pd.DataFrame | None) -> tuple[dict[str, pd.DataFrame], bytes]:
+                _rules: pd.DataFrame | None, _cue_only: pd.DataFrame | None) -> tuple[dict[str, pd.DataFrame], bytes]:
     """결과 시트와 엑셀 파일. 같은 실행·같은 문항·같은 비교 변수면 다시 계산하지 않는다
-    (밑줄로 시작하는 인자는 캐시 열쇠에서 빠지고 run_id 등이 대신한다)."""
+    (밑줄로 시작하는 인자는 캐시 열쇠에서 빠지고 run_id 등이 대신한다).
+    _cue_only: 같은 오차로 학력·연령 항만 뺀 응답(코드북 방식). 있으면 집단 차이 분해 시트를 만든다."""
     sheets = analysis.build_report(_responses, _questions, list(compare_by), _meta)
+    raw = sheets.pop("원자료")
     valid = _responses[_responses["error"].fillna("") == ""]
+    if _cue_only is not None:
+        full_scores = analysis.scale_summary(valid, _questions)[1]
+        cue_scores = analysis.scale_summary(_cue_only.loc[valid.index], _questions)[1]
+        ids = [q.id for q in _questions]
+        for by in compare_by:
+            sheets[f"분해_{COLUMN_LABELS.get(by, by)}"] = pd.concat([
+                analysis.gap_decomposition(valid, full_scores, cue_scores, by),
+                analysis.gap_decomposition(valid, valid[ids], _cue_only.loc[valid.index, ids], by)],
+                ignore_index=True)
     cue_cols = [c for c in valid.columns if c.startswith("단서_")]
     if cue_cols:
         labels = cue_labels(load_codebook())
@@ -141,6 +154,7 @@ def make_report(run_id: str, q_ids: tuple[str, ...], compare_by: tuple[str, ...]
             sheets[f"단서비교_{COLUMN_LABELS.get(by, by)}"] = analysis.group_compare(valid, named, by)
     if _rules is not None:
         sheets["추정 규칙"] = _rules.reset_index()
+    sheets["원자료"] = raw
     return sheets, analysis.to_excel(sheets)
 
 
@@ -270,6 +284,30 @@ with st.sidebar:
 st.title("대학·진로교육 인식 가상 설문")
 st.caption("NVIDIA Nemotron-Personas-Korea 합성 페르소나 100만 명 중 원하는 인구집단을 골라 "
            "리커트 5점 척도 설문을 시뮬레이션하고 바로 통계를 냅니다.")
+
+DEFAULT_RQ = ("RQ1. 선택한 집단은 대학교육의 가치, 진로교육의 효과, 교육 개선의 필요성을 어떻게 인식하는가?\n"
+              "RQ2. 이 인식은 성별·연령에 따라 다른가?\n"
+              "RQ3. 생활서사에 나타난 교육·진로 단서는 집단별로 어떻게 다르게 분포하는가?")
+with st.expander("연구 설계: 연구 문제·가설·주요 비교 변수"):
+    st.caption("여기 적은 내용은 5단계 결과 위와 엑셀 '설정' 시트 맨 위에 남습니다. 결과는 합성 페르소나에 대한 "
+               "추정이므로, 이 도구로는 가설을 세우고 실제 조사의 문항·표본 설계를 미리 점검합니다.")
+    research_q = st.text_area("연구 문제", DEFAULT_RQ, height=110, key="design_rq")
+    hypotheses = st.text_area("가설 (선택)", height=80, key="design_hyp",
+                              placeholder="예) H1. 60세 이상은 20대보다 정부의 공적 투자 확대(Q10)에 더 동의할 것이다.")
+    design_compare = st.multiselect("주요 비교 변수 (5단계 집단 비교의 기본값)", COMPARE_CHOICES,
+                                    default=["sex", "age_group"], key="design_compare",
+                                    format_func=lambda c: COLUMN_LABELS.get(c, c))
+
+
+@st.cache_resource
+def data_source(version: int = DATA_VERSION) -> str:
+    return get_demographics().attrs.get("data_source") or dataset_revision()
+
+
+@st.cache_resource
+def code_versions() -> tuple[str, str]:
+    return app_version(), file_fingerprint(CODEBOOK_PATH)
+
 
 demo = get_demographics()
 opts, districts_by_province = get_options()
@@ -480,17 +518,21 @@ with st.container(border=True):
             st.rerun()
 
 # ---------------- 4. 실행 ----------------
-def save_meta(rules: pd.DataFrame | None = None) -> None:
-    """엑셀 '설정' 시트에 실행 조건을, 코드북 방식이면 '추정 규칙' 시트에 쓴 가중치를 남긴다."""
+def save_meta(rules: pd.DataFrame | None = None, extra: dict[str, str] | None = None) -> None:
+    """엑셀 '설정' 시트에 연구 설계와 실행 조건·버전을, 코드북 방식이면 '추정 규칙' 시트에 쓴 가중치를 남긴다."""
     st.session_state.rules = rules
     st.session_state.run_id = datetime.now().isoformat()  # 결과 표·보고서 캐시의 열쇠
     info = st.session_state.get("sample_info") or {}  # 표본을 뽑을 때의 조건(지금 화면 조건과 다를 수 있음)
-    st.session_state.meta = pd.DataFrame({
-        "항목": ["실행 시각", "응답 방식", "모델", "effort", *info, "문항"],
-        "값": [datetime.now().isoformat(timespec="seconds"), MODES[mode], model if mode == "llm" else "-",
-              effort if mode == "llm" else "-", *[f"{v:,}" if isinstance(v, int) else v for v in info.values()],
-              ", ".join(q.id for q in questions)],
-    })
+    app_ver, codebook_ver = code_versions()
+    rows = {"연구 문제": research_q.strip() or "-", "가설": hypotheses.strip() or "-",
+            "주요 비교 변수": ", ".join(COLUMN_LABELS.get(c, c) for c in design_compare) or "-",
+            "실행 시각": datetime.now().isoformat(timespec="seconds"), "응답 방식": MODES[mode],
+            "모델": model if mode == "llm" else "-", "effort": effort if mode == "llm" else "-",
+            **{k: f"{v:,}" if isinstance(v, int) else v for k, v in info.items()},
+            "문항": ", ".join(q.id for q in questions), **(extra or {}),
+            "데이터 버전": data_source(), "코드북 파일": f"codebook.json (지문 {codebook_ver})",
+            "앱 버전": app_ver}
+    st.session_state.meta = pd.DataFrame({"항목": list(rows), "값": [str(v) for v in rows.values()]})
     st.session_state.run_signature = run_signature
 
 
@@ -508,9 +550,13 @@ with st.container(border=True):
         with st.expander("코드북: 어떤 단서를 어떻게 찾나요?"):
             st.markdown("페르소나의 " + ", ".join(f"`{f}`" for f in codebook["text_fields"]) +
                         " 문장을 하나로 합친 뒤, 단서별 키워드를 찾습니다. **0점** 키워드 없음, "
-                        "**1점** 키워드 1개(약한 단서), **2점** 서로 다른 키워드 2개 이상(반복·구체적 단서).")
+                        "**1점** 키워드 1개(약한 단서), **2점** 서로 다른 키워드 2개 이상(반복·구체적 단서).\n\n"
+                        "제외 표현('대학에 가지 못', '아이들 공부' 등 부정이나 자녀 이야기)은 먼저 지우고, 긴 키워드부터 찾아 "
+                        "'대학원' 한 번이 '대학'으로 한 번 더 세어지지 않게 합니다.")
             st.dataframe(pd.DataFrame([{"단서": v["label"], "정의": v["definition"],
-                                        "키워드": ", ".join(v["keywords"])} for v in codebook["cues"].values()]),
+                                        "키워드": ", ".join(v["keywords"]),
+                                        "제외 표현": ", ".join(v.get("exclude", []))}
+                                       for v in codebook["cues"].values()]),
                          hide_index=True, width="stretch")
         with st.expander("추정 규칙: 문항별 가중치 보기·고치기"):
             st.markdown(
@@ -526,16 +572,32 @@ with st.container(border=True):
         b1, b2, b3 = st.columns([2, 2, 1], vertical_alignment="bottom")
         noise_sd = b1.slider("무작위 오차 크기(표준편차)", 0.0, 1.5, noise_sd, 0.1,
                              help="0이면 같은 단서를 가진 사람은 모두 같은 응답을 합니다.")
-        b2.markdown(f"**{len(sample):,}명 × {len(questions)}문항**")
+        use_demo = b2.toggle("학력·연령 가중치 쓰기", value=True,
+                             help="끄면 edu_high·young·old 항을 0으로 두고 생활서사 단서만으로 추정합니다. "
+                                  "켜 두면 5단계 집단 비교에서 차이 중 이 항이 만든 몫을 따로 보여 줍니다.")
+        b2.caption(f"{len(sample):,}명 × {len(questions)}문항")
+        weights = wt_edit.rename(columns={"기준점": "intercept", **{v: k for k, v in labels.items()}})
+        if not use_demo:
+            weights = weights.assign(**{t: 0.0 for t in DEMO_TERMS if t in weights})
+        empty = zero_weights(weights)
+        if empty:
+            st.warning(f"{', '.join(empty)} 문항은 가중치가 모두 0이라 응답이 기준점 근처의 무작위 오차만 남습니다. "
+                       "위 '추정 규칙'에서 이 문항에 영향을 줄 단서의 가중치를 정하세요.")
         run_signature = {"표본": st.session_state.get("sample_info"), "방식": mode,
                          "문항": [(q.id, q.text, q.reverse) for q in questions],
-                         "가중치": wt_edit.to_json(), "오차": noise_sd}
+                         "가중치": wt_edit.to_json(), "오차": noise_sd, "학력·연령 항": use_demo}
         if b3.button("응답 추정", type="primary", width="stretch"):
             bar = st.progress(0.0, text="페르소나 문장 가져오는 중")
             run_sample = with_personas(bar)
-            weights = wt_edit.rename(columns={"기준점": "intercept", **{v: k for k, v in labels.items()}})
-            st.session_state.responses = estimate_responses(run_sample, questions, codebook, weights, noise_sd)
-            save_meta(wt_edit.assign(**{"오차 표준편차": noise_sd}))
+            result = estimate_responses(run_sample, questions, codebook, weights, noise_sd, demographic=use_demo)
+            st.session_state.responses = result
+            # 같은 오차로 학력·연령 항만 뺀 응답: 집단 차이 중 가정이 만든 몫을 따로 보기 위해
+            cues = result[[f"단서_{c}" for c in codebook["cues"]]].rename(columns=lambda c: c.removeprefix("단서_"))
+            st.session_state.cue_only = (estimate_from_cues(cues, result, questions, weights, noise_sd,
+                                                            demographic=False) if use_demo else None)
+            rules = wt_edit.assign(**{t: 0.0 for t in DEMO_TERMS if t in wt_edit and not use_demo})
+            save_meta(rules.assign(**{"오차 표준편차": noise_sd}),
+                      {"학력·연령 항": "사용" if use_demo else "끔(서사 단서만)"})
             bar.empty()
             st.toast("응답 추정을 마쳤습니다. 아래 5단계에서 결과를 보세요.")
     else:
@@ -552,6 +614,7 @@ with st.container(border=True):
                 run_sample, questions, mode=mode, model=model, effort=effort, workers=workers,
                 api_key=api_key or None,
                 progress=lambda d, t: bar.progress(d / t, text=f"응답 생성 중 {d}/{t}"))
+            st.session_state.cue_only = None
             save_meta()
             bar.empty()
             st.toast("응답을 만들었습니다. 아래 5단계에서 결과를 보세요.")
@@ -586,10 +649,14 @@ with st.container(border=True):
                 "집단 차이는 '이런 차이가 있을 수 있다'는 가설로 읽고 실제 조사로 확인하세요."
                 + (f" 페르소나 문장이 없는 {no_text}명은 인구통계만으로 추정했습니다." if no_text else ""))
 
+    if research_q.strip() or hypotheses.strip():
+        with st.expander("이 결과로 답할 연구 문제와 가설"):
+            st.markdown("  \n".join(line for line in (research_q + "\n" + hypotheses).splitlines() if line.strip()))
     compare_by = st.multiselect("집단 비교 변수 (집단 비교·단서 분석·엑셀 보고서에 적용)", COMPARE_CHOICES,
-                                default=["sex", "age_group"], format_func=lambda c: COLUMN_LABELS.get(c, c))
+                                default=design_compare, format_func=lambda c: COLUMN_LABELS.get(c, c))
     sheets, excel = make_report(st.session_state.run_id, tuple(q_ids), tuple(compare_by), responses, questions,
-                                st.session_state.get("meta"), st.session_state.get("rules"))
+                                st.session_state.get("meta"), st.session_state.get("rules"),
+                                st.session_state.get("cue_only"))
     items = sheets["문항 통계"]
     scale_table = sheets["영역 통계"]
 
@@ -616,10 +683,20 @@ with st.container(border=True):
             label = COLUMN_LABELS.get(by, by)
             st.markdown(f"**{label}별 영역 점수**")
             st.dataframe(analysis.p_display(sheets[f"비교_{label}_영역"]), hide_index=True, width="stretch")
+            if f"사후_{label}_영역" in sheets:
+                with st.expander(f"{label}: 어느 집단끼리 다른가 (Games-Howell 사후검정)"):
+                    st.dataframe(analysis.p_display(sheets[f"사후_{label}_영역"]), hide_index=True, width="stretch")
             with st.expander(f"{label}별 문항 점수"):
                 st.dataframe(analysis.p_display(sheets[f"비교_{label}_문항"]), hide_index=True, width="stretch")
-        st.caption(f"응답자가 {analysis.MIN_GROUP_N}명 미만인 집단은 검정에서 뺐습니다. "
-                   "표본이 크면 작은 차이도 유의하게 나오므로 p값보다 효과크기(d, η²)를 함께 보세요.")
+            if f"분해_{label}" in sheets:
+                with st.expander(f"{label}: 차이 중 학력·연령 가중치가 만든 부분"):
+                    st.caption("평균이 가장 높은 집단과 가장 낮은 집단의 차이를, 같은 오차로 학력·연령 항만 뺀 추정과 "
+                               "비교했습니다. 몫이 클수록 그 차이는 서사 데이터가 아니라 가중치로 넣은 가정에서 나온 것입니다. "
+                               "차이가 0.05점보다 작으면 몫을 계산하지 않습니다.")
+                    st.dataframe(sheets[f"분해_{label}"], hide_index=True, width="stretch")
+        st.caption(f"응답자가 {analysis.MIN_GROUP_N}명 미만인 집단은 검정에서 뺐습니다. 세 집단 이상은 집단 분산이 "
+                   "달라도 되는 Welch 분산분석을 씁니다. 한 표 안의 여러 검정은 Holm 방식으로 보정한 p값으로 유의 여부를 "
+                   "표시합니다. 표본이 크면 작은 차이도 유의하게 나오므로 p값보다 효과크기(d, η²)를 함께 보세요.")
     if cue_cols:
         with tabs["생활서사 단서"]:
             st.dataframe(sheets["단서 통계"], hide_index=True, width="stretch")
@@ -636,7 +713,8 @@ with st.container(border=True):
                              hide_index=True, width="stretch")
     with tabs["내려받기"]:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        st.markdown("엑셀 보고서에는 설정, 응답자 구성, 문항·영역 통계, 집단 비교, 단서 분석, 추정 규칙, 원자료가 시트별로 들어 있습니다.")
+        st.markdown("엑셀 보고서에는 설정(연구 설계·실행 조건·데이터와 코드 버전), 응답자 구성, 문항·영역 통계, 집단 비교와 "
+                    "사후검정, 차이 분해, 단서 분석, 추정 규칙, 원자료가 시트별로 들어 있습니다.")
         d1, d2 = st.columns(2)
         d1.download_button("엑셀 보고서 내려받기", excel, f"survey_{stamp}.xlsx", type="primary", width="stretch",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

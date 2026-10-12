@@ -140,6 +140,22 @@ def _compact(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def dataset_revision(root: Path | None = None) -> str:
+    """보고서에 남길 데이터 버전. 원격이면 Hugging Face 커밋(main과 parquet 변환본), 로컬이면 폴더."""
+    root = root or local_dir()
+    if root is not None:
+        return f"로컬 파일 ({root})"
+    try:
+        from huggingface_hub import HfApi
+
+        api = HfApi()
+        main = api.dataset_info(REPO_ID, timeout=10).sha
+        parquet = api.dataset_info(REPO_ID, revision="refs/convert/parquet", timeout=10).sha
+        return f"{REPO_ID} main@{main[:10]} · parquet 변환본@{parquet[:10]}"
+    except Exception as e:  # 버전 확인이 안 돼도 조사는 진행한다
+        return f"{REPO_ID} (커밋 확인 실패: {type(e).__name__})"
+
+
 def load_demographics(root: Path | None = None) -> pd.DataFrame:
     """인구통계 열만 읽는다(텍스트 열은 빼서 메모리를 아낀다). row_idx는 전체 데이터에서의 행 번호."""
     root = root or local_dir()
@@ -159,7 +175,9 @@ def load_demographics(root: Path | None = None) -> pd.DataFrame:
             parts = list(pool.map(read, paths))
         df = pd.concat(parts, ignore_index=True)
     df.insert(0, "row_idx", range(len(df)))
-    return _compact(df)
+    df = _compact(df)
+    df.attrs["data_source"] = dataset_revision(root)  # 읽은 시점의 데이터 버전
+    return df
 
 
 def _fetch_row(idx: int) -> dict:

@@ -4,7 +4,7 @@ import pytest
 
 from survey import analysis
 from survey.data import PopulationFilter, load_demographics, load_personas
-from survey.questions import load_default_questions
+from survey.questions import Question, load_default_questions
 from survey.sampling import cochran_n, plan_sample_size, stratified_sample, two_group_n
 from survey.simulate import _schema, _user_prompt, run_survey
 from tests.make_mock_data import make
@@ -54,7 +54,8 @@ def test_demo_run_and_report(data_root):
     sheets = analysis.build_report(res, qs, ["sex", "age_group"])
     assert {"문항 통계", "영역 통계", "비교_성별_영역"} <= set(sheets)
     assert sheets["비교_성별_영역"]["검정"].eq("Welch t").all()
-    assert sheets["비교_연령대_영역"]["검정"].eq("일원분산분석").all()
+    assert sheets["비교_연령대_영역"]["검정"].eq("Welch 분산분석").all()
+    assert "p(Holm)" in sheets["비교_연령대_영역"] and "사후_연령대_영역" in sheets
     assert len(analysis.to_excel(sheets)) > 1000
 
 
@@ -132,6 +133,12 @@ def test_codebook_scoring_and_estimation():
     assert score_text("대학 시절", cb["cues"]["academic"]["keywords"])[0] == 1
     assert score_text("대학에서 전공 공부", cb["cues"]["academic"]["keywords"])[0] == 2
     assert score_text("배우자와 산다", cb["cues"]["lifelong"]["keywords"])[0] == 0  # '배우자'는 평생학습 아님
+    acad = cb["cues"]["academic"]
+    score = lambda t: score_text(t, acad["keywords"], acad["exclude"])
+    assert score("대학원에 다녔다") == (1, ["대학원"])           # '대학'으로 한 번 더 세지 않음
+    assert score("대학 시절을 지나 대학원에 갔다")[0] == 2
+    assert score("집안 형편으로 대학에 가지 못했다")[0] == 0     # 부정 표현
+    assert score("아이들 공부를 봐 주며 대학에 보낸 것이 자랑")[0] == 0  # 자녀 이야기
 
     qs = load_default_questions()
     people = pd.DataFrame({
@@ -145,6 +152,16 @@ def test_codebook_scoring_and_estimation():
     again = estimate_responses(people, qs, cb)
     assert again[[q.id for q in qs]].equals(estimate_responses(people, qs, cb)[[q.id for q in qs]])  # 재현성
     assert weight_table(qs, cb).loc["Q01", "intercept"] == 3.0
+    # 학력·연령 항을 빼면 같은 오차에 서사 단서만 남는다
+    from survey.codebook import estimate_from_cues, zero_weights
+    cues = r[[c for c in r if c.startswith("단서_")]].rename(columns=lambda c: c.removeprefix("단서_"))
+    wt = weight_table(qs, cb)
+    full = estimate_from_cues(cues, people, qs, wt, 0.0)
+    cue_only = estimate_from_cues(cues, people, qs, wt, 0.0, demographic=False)
+    assert full.loc[0, "Q01"] >= cue_only.loc[0, "Q01"]  # 대학원 → edu_high 항이 Q01을 올린다
+    assert full.loc[1, "Q01"] == cue_only.loc[1, "Q01"]  # 고등학교·45세 → 인구통계 항 없음
+    custom = qs + [Question("U01", "새 문항")]
+    assert zero_weights(weight_table(custom, cb)) == ["U01"]
 
 
 def test_province_and_education_order():
@@ -178,3 +195,43 @@ def test_p_value_display_and_effect_direction():
     shown = analysis.p_display(table)
     assert shown.loc[0, "p값"] == "<.001"
     assert analysis.p_text(0.0412) == "0.041" and analysis.p_text(float("nan")) == ""
+
+
+def test_holm_welch_anova_and_games_howell():
+    from scipy import stats
+
+    adj = analysis.holm(pd.Series([0.01, 0.04, 0.03, np.nan]))
+    assert np.allclose(adj[:3], [0.03, 0.06, 0.06]) and np.isnan(adj[3])
+
+    rng = np.random.default_rng(1)
+    samples = [rng.normal(3, 0.5, 40), rng.normal(3.3, 1.2, 25), rng.normal(2.8, 0.8, 60)]
+    f, _, _, p = analysis.welch_anova(samples)
+    try:
+        ref = stats.f_oneway(*samples, equal_var=False)  # SciPy 1.15 이상
+        assert np.isclose(f, ref.statistic) and np.isclose(p, ref.pvalue)
+    except TypeError:
+        pass
+
+    df = pd.DataFrame({"g": ["가"] * 50 + ["나"] * 50 + ["다"] * 50,
+                       "y": np.r_[rng.normal(2, 0.5, 50), rng.normal(2, 0.5, 50), rng.normal(4, 0.5, 50)]})
+    gh = analysis.games_howell(df, df[["y"]], "g").set_index(["집단 A", "집단 B"])
+    assert gh.loc[("가", "나"), "p(Games-Howell)"] > 0.05
+    assert gh.loc[("가", "다"), "p(Games-Howell)"] < 0.001 and gh.loc[("가", "다"), "평균 차이(A−B)"] < 0
+
+
+def test_version_records(monkeypatch, tmp_path):
+    import huggingface_hub
+    from survey import data as d
+    from survey.provenance import app_version, file_fingerprint
+
+    assert d.dataset_revision(tmp_path).startswith("로컬 파일")
+    monkeypatch.delenv("NEMOTRON_DATA_DIR", raising=False)
+
+    class FakeApi:
+        def dataset_info(self, repo_id, revision=None, timeout=None):
+            return type("Info", (), {"sha": ("b" if revision else "a") * 40})()
+
+    monkeypatch.setattr(huggingface_hub, "HfApi", FakeApi)
+    assert d.dataset_revision() == f"{d.REPO_ID} main@aaaaaaaaaa · parquet 변환본@bbbbbbbbbb"
+    (tmp_path / "x.json").write_text("{}", encoding="utf-8")
+    assert len(file_fingerprint(tmp_path / "x.json")) == 10 and app_version()
