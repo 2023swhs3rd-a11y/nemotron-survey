@@ -615,9 +615,9 @@ with st.container(border=True):
         for by in compare_by:
             label = COLUMN_LABELS.get(by, by)
             st.markdown(f"**{label}별 영역 점수**")
-            st.dataframe(sheets[f"비교_{label}_영역"], hide_index=True, width="stretch")
+            st.dataframe(analysis.p_display(sheets[f"비교_{label}_영역"]), hide_index=True, width="stretch")
             with st.expander(f"{label}별 문항 점수"):
-                st.dataframe(sheets[f"비교_{label}_문항"], hide_index=True, width="stretch")
+                st.dataframe(analysis.p_display(sheets[f"비교_{label}_문항"]), hide_index=True, width="stretch")
         st.caption(f"응답자가 {analysis.MIN_GROUP_N}명 미만인 집단은 검정에서 뺐습니다. "
                    "표본이 크면 작은 차이도 유의하게 나오므로 p값보다 효과크기(d, η²)를 함께 보세요.")
     if cue_cols:
@@ -625,12 +625,12 @@ with st.container(border=True):
             st.dataframe(sheets["단서 통계"], hide_index=True, width="stretch")
             fr = cue_friedman(valid[cue_cols].rename(columns=lambda c: c.removeprefix("단서_")))
             if fr:
-                st.caption(f"단서 간 차이(Friedman 검정): χ²={fr['통계량']}, p={fr['p값']:.4f}. "
+                st.caption(f"단서 간 차이(Friedman 검정): χ²={fr['통계량']}, p={analysis.p_text(fr['p값'])}. "
                            "같은 사람이 여러 단서 점수를 가지므로 반복측정 검정을 썼습니다.")
             for by in compare_by:
                 label = COLUMN_LABELS.get(by, by)
                 with st.expander(f"{label}별 단서 점수"):
-                    st.dataframe(sheets[f"단서비교_{label}"], hide_index=True, width="stretch")
+                    st.dataframe(analysis.p_display(sheets[f"단서비교_{label}"]), hide_index=True, width="stretch")
             with st.expander("응답 근거 예시(찾은 키워드)"):
                 st.dataframe(valid[["sex", "age", "province", "education_level", "occupation", "comment"]].head(30),
                              hide_index=True, width="stretch")

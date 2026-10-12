@@ -11,6 +11,7 @@ from .data import COLUMN_LABELS
 from .questions import Question
 
 MIN_GROUP_N = 5  # 이보다 작은 집단은 비교 검정에서 뺀다
+P_COLUMNS = ["p값", "비모수 p(Mann-Whitney)", "비모수 p(Kruskal-Wallis)"]
 
 
 def _ci95(x: pd.Series) -> tuple[float, float]:
@@ -92,9 +93,10 @@ def group_compare(df: pd.DataFrame, values: pd.DataFrame, by: str) -> pd.DataFra
     for col in values.columns:
         data = pd.DataFrame({"g": groups, "y": pd.to_numeric(values[col], errors="coerce")}).dropna()
         data = data[data["g"].isin(keep)]
-        samples = [d["y"].values for _, d in data.groupby("g", observed=True)]
+        parts = list(data.groupby("g", observed=True))
+        samples = [d["y"].values for _, d in parts]
         row = {"항목": col}
-        for name, d in data.groupby("g", observed=True):
+        for name, d in parts:
             row[f"{name} (n={len(d)})"] = round(d["y"].mean(), 2)
         if len(samples) == 2:
             t = stats.ttest_ind(*samples, equal_var=False)
@@ -103,7 +105,7 @@ def group_compare(df: pd.DataFrame, values: pd.DataFrame, by: str) -> pd.DataFra
             row.update({"검정": "Welch t", "통계량": t.statistic, "p값": t.pvalue,
                         "비모수 p(Mann-Whitney)": u.pvalue,
                         "효과크기": (samples[0].mean() - samples[1].mean()) / pooled if pooled else np.nan,
-                        "효과크기 종류": "Cohen d"})
+                        "효과크기 종류": f"Cohen d ({parts[0][0]} − {parts[1][0]})"})
         elif len(samples) > 2:
             f = stats.f_oneway(*samples)
             h = stats.kruskal(*samples)
@@ -119,7 +121,27 @@ def group_compare(df: pd.DataFrame, values: pd.DataFrame, by: str) -> pd.DataFra
         if "p값" in row:
             row["유의(p<.05)"] = "*" if row["p값"] < 0.05 else ""
         rows.append(row)
-    return pd.DataFrame(rows).round(4)
+    out = pd.DataFrame(rows)
+    # p값은 반올림하지 않는다(0.0으로 보이지 않게). 화면 표기는 p_display에서 한다.
+    rest = [c for c in out.columns if c not in P_COLUMNS]
+    out[rest] = out[rest].round(4)
+    return out
+
+
+def p_text(p: float) -> str:
+    """APA 방식 p값 표기: .001 미만은 '<.001', 나머지는 소수 셋째 자리."""
+    if pd.isna(p):
+        return ""
+    return "<.001" if p < 0.001 else f"{p:.3f}"
+
+
+def p_display(table: pd.DataFrame) -> pd.DataFrame:
+    """화면용 사본: p값 열을 '<.001' 같은 표기로 바꾼다. 엑셀에는 원래 숫자를 남긴다."""
+    out = table.copy()
+    for c in P_COLUMNS:
+        if c in out:
+            out[c] = out[c].map(p_text)
+    return out
 
 
 def demographics_table(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:

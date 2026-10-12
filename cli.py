@@ -65,9 +65,12 @@ def main() -> None:
                                progress=lambda d, t: print(f"\r{d}/{t}", end="", flush=True))
         print()
 
-    meta = pd.DataFrame({"항목": ["실행 시각", "응답 방식", "모델", "대상 조건", "모집단 수", "표본 수"],
-                         "값": [datetime.now().isoformat(timespec="seconds"), a.mode, a.model,
-                               flt.describe(), len(population), len(sample)]})
+    rows = {"실행 시각": datetime.now().isoformat(timespec="seconds"), "응답 방식": a.mode,
+            "대상 조건": flt.describe(), "모집단 수": len(population), "표본 수": len(sample),
+            "층화 기준": ", ".join(a.strata), "표본 시드": a.seed}
+    if a.mode == "llm":
+        rows["모델"] = a.model
+    meta = pd.DataFrame({"항목": list(rows), "값": [str(v) for v in rows.values()]})
     sheets = analysis.build_report(responses, questions, a.compare, meta)
     out = Path(a.out)
     out.mkdir(exist_ok=True)

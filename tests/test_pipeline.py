@@ -166,3 +166,15 @@ def test_province_and_education_order():
     s = s.assign(score=range(len(s)))
     table = analysis.group_compare(s, s[["score"]], "education_level")
     assert [c.split(" (")[0] for c in table.columns[1:3]] == ["무학", "초등학교"]
+
+
+def test_p_value_display_and_effect_direction():
+    rng = np.random.default_rng(0)
+    df = pd.DataFrame({"g": ["가"] * 200 + ["나"] * 200,
+                       "y": np.r_[rng.normal(4, 0.5, 200), rng.normal(2, 0.5, 200)]})
+    table = analysis.group_compare(df, df[["y"]], "g")
+    assert 0 < table.loc[0, "p값"] < 1e-10  # 반올림으로 0이 되지 않는다
+    assert table.loc[0, "효과크기 종류"] == "Cohen d (가 − 나)" and table.loc[0, "효과크기"] > 0
+    shown = analysis.p_display(table)
+    assert shown.loc[0, "p값"] == "<.001"
+    assert analysis.p_text(0.0412) == "0.041" and analysis.p_text(float("nan")) == ""
