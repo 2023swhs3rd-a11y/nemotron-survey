@@ -34,6 +34,22 @@ st.markdown("""<style>
 .step-desc {color: #6b7280; font-size: .9rem; margin: 0 0 .4rem 2.5rem;}
 .group-label {font-weight: 600; font-size: .95rem; margin: .2rem 0 .3rem; color: #1c5cab;}
 div[data-testid="stMetricValue"] {font-size: 1.7rem;}
+/* 상단 요약 막대: 스크롤해도 화면 위에 붙어 있다 */
+div[data-testid="stLayoutWrapper"]:has(> .st-key-summary_bar) {position: sticky; top: 3.75rem; z-index: 990;}
+.st-key-summary_bar {background: #ffffff;
+                     border: 1px solid #dfe5ee; border-radius: .6rem; padding: .7rem 1rem .8rem;
+                     box-shadow: 0 2px 8px rgba(28, 92, 171, .08);}
+.sb-row {display: flex; flex-wrap: wrap; gap: .4rem 1.6rem; align-items: baseline;}
+.sb-item {display: flex; flex-direction: column; min-width: 7.5rem;}
+.sb-label {font-size: .78rem; color: #6b7280;}
+.sb-value {font-size: 1.35rem; font-weight: 700; color: #1f2937; line-height: 1.3;}
+.sb-delta {font-size: .8rem; font-weight: 600; margin-left: .3rem;}
+.sb-up {color: #1a7f37;} .sb-down {color: #c7383a;}
+.sb-track {position: relative; height: .55rem; background: #e8edf5; border-radius: .3rem; margin-top: .55rem; overflow: hidden;}
+.sb-fill {position: absolute; left: 0; top: 0; bottom: 0; background: #1c5cab; border-radius: .3rem;}
+.sb-sample {position: absolute; left: 0; top: 0; bottom: 0; background: #f5a524; border-radius: .3rem;}
+.sb-legend {font-size: .75rem; color: #6b7280; margin-top: .3rem;}
+.sb-dot {display: inline-block; width: .6rem; height: .6rem; border-radius: 50%; margin: 0 .25rem 0 .6rem; vertical-align: -.05rem;}
 /* 고르는 버튼(pills)이 칸을 넘으면 옆 칸에 가려지지 않고 다음 줄로 넘어가게 */
 div[data-testid="stButtonGroup"] > div {flex-wrap: wrap; overflow: visible;}
 </style>""", unsafe_allow_html=True)
@@ -124,6 +140,41 @@ def likert_chart(summary: pd.DataFrame, scale: dict[int, str]) -> go.Figure:
     return fig
 
 
+def _delta(key: str, value: int | None) -> str:
+    """지난 값과 비교한 증감 표시. 값이 바뀔 때만 새로 계산하고, 그 사이에는 마지막 증감을 유지한다."""
+    last = st.session_state.get(f"sb_last_{key}")
+    if value is not None and last is not None and value != last:
+        st.session_state[f"sb_delta_{key}"] = value - last
+    if value is not None:
+        st.session_state[f"sb_last_{key}"] = value
+    d = st.session_state.get(f"sb_delta_{key}")
+    if not d or value is None:
+        return ""
+    return f'<span class="sb-delta {"sb-up" if d > 0 else "sb-down"}">{"▲" if d > 0 else "▼"} {abs(d):,}</span>'
+
+
+def render_summary(slot, total: int, pop_n: int | None, recommended: int | None = None,
+                   planned: int | None = None) -> None:
+    """상단 요약 막대: 전체 → 대상 인원 → 권장·설정 표본, 그리고 전체 대비 비율 막대."""
+    def item(label: str, value: str, delta: str = "") -> str:
+        return f'<div class="sb-item"><span class="sb-label">{label}</span><span class="sb-value">{value}{delta}</span></div>'
+
+    share = pop_n / total if pop_n and total else 0
+    parts = [item("전체 페르소나", f"{total:,}명"),
+             item("대상 인원", f"{pop_n:,}명" if pop_n is not None else "—", _delta("pop", pop_n)),
+             item("전체 대비", f"{share:.1%}" if pop_n is not None else "—"),
+             item("권장 표본", f"{recommended:,}명" if recommended else "—", _delta("rec", recommended)),
+             item("설정한 표본", f"{planned:,}명" if planned else "—")]
+    fill = max(share * 100, 0.6) if pop_n else 0
+    sample_w = fill * (planned / pop_n) if planned and pop_n else 0
+    slot.markdown(
+        f'<div class="sb-row">{"".join(parts)}</div>'
+        f'<div class="sb-track"><div class="sb-fill" style="width:{fill:.2f}%"></div>'
+        f'<div class="sb-sample" style="width:{max(sample_w, 0.4 if planned else 0):.2f}%"></div></div>'
+        f'<div class="sb-legend">막대 전체 = 100만 명<span class="sb-dot" style="background:#1c5cab"></span>대상 인원'
+        f'<span class="sb-dot" style="background:#f5a524"></span>설정한 표본</div>', unsafe_allow_html=True)
+
+
 REPO_URL = "https://github.com/2023swhs3rd-a11y/nemotron-survey"
 
 
@@ -196,6 +247,7 @@ st.caption("NVIDIA Nemotron-Personas-Korea 합성 페르소나 100만 명 중 �
 
 demo = get_demographics()
 opts, districts_by_province = get_options()
+summary_slot = st.container(key="summary_bar").empty()
 
 @st.cache_resource
 def prefetch_pool() -> ThreadPoolExecutor:
@@ -259,6 +311,7 @@ with st.container(border=True):
 
     if any(p is None for p in [sex, marital, housing, province, district, family, education, field]):
         metric_slot.metric("대상 인원", "—")
+        render_summary(summary_slot, len(demo), None)
         st.warning("'전체'를 끈 항목은 하나 이상 골라야 합니다.")
         st.stop()
     flt = PopulationFilter(age_min=age[0], age_max=age[1], sex=sex, province=province, district=district,
@@ -267,6 +320,7 @@ with st.container(border=True):
     population = flt.apply(demo)
     metric_slot.metric("대상 인원", f"{len(population):,}명")
     if population.empty:
+        render_summary(summary_slot, len(demo), 0)
         st.warning("조건에 맞는 페르소나가 없습니다. 조건을 넓혀 보세요.")
         st.stop()
     with st.expander("선택한 인구집단의 구성 확인"):
@@ -277,7 +331,8 @@ with st.container(border=True):
             counts = population[col].value_counts()
             counts = counts[counts > 0]
             box.dataframe(pd.DataFrame({"인원": counts, "비율(%)": (counts / counts.sum() * 100).round(1)})
-                          .rename_axis(COLUMN_LABELS[col]), width="stretch")
+                          .rename_axis(COLUMN_LABELS[col]), width="stretch",
+                          column_config={"인원": st.column_config.NumberColumn(format="localized")})
 
 # ---------------- 2. 표본 크기 ----------------
 with st.container(border=True):
@@ -298,6 +353,7 @@ with st.container(border=True):
     strata = k2.multiselect("층화 기준(모집단 비율 유지)", COMPARE_CHOICES,
                             default=["sex", "age_group", "province"],
                             format_func=lambda c: COLUMN_LABELS.get(c, c))
+    render_summary(summary_slot, len(demo), len(population), plan.n_total, int(n))
     seed = k3.number_input("난수 시드", value=42, step=1, help="같은 값이면 같은 표본이 뽑힙니다.")
     if k4.button("표본 추출", type="primary", width="stretch"):
         st.session_state.sample = stratified_sample(population, int(n), strata, int(seed))
