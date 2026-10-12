@@ -43,15 +43,37 @@ AGE_LABELS = ["19-29세", "30대", "40대", "50대", "60대", "70세 이상"]
 EDUCATION_ORDER = ["무학", "초등학교", "중학교", "고등학교", "2~3년제 전문대학", "4년제 대학교", "대학원"]
 
 
+# 표기가 조금 달라도 순서를 정할 수 있도록 단어로 판단한다(위에서부터 먼저 맞는 규칙)
+_EDU_RULES = [("대학원", 6), ("석사", 6), ("박사", 6), ("4년제 미만", 4), ("2~3년제", 4), ("2-3년제", 4),
+              ("전문대", 4), ("4년제", 5), ("대학교", 5), ("고등", 3), ("중학", 2), ("초등", 1),
+              ("무학", 0), ("미취학", 0), ("없음", 0)]
+
+
 def education_rank(value: str) -> tuple[int, str]:
-    """EDUCATION_ORDER에 없는 값(표기가 조금 다른 경우)은 비슷한 단어로 자리를 정하고, 그래도 없으면 맨 뒤."""
+    """낮은 학력 → 높은 학력 순서 값. 어떤 규칙에도 맞지 않으면 맨 뒤."""
     v = str(value)
     if v in EDUCATION_ORDER:
         return EDUCATION_ORDER.index(v), v
-    for i, key in reversed(list(enumerate(["무학", "초등", "중학", "고등", "전문대", "4년제", "대학원"]))):
+    for key, rank in _EDU_RULES:
         if key in v:
-            return i, v
+            return rank, v
     return len(EDUCATION_ORDER), v
+
+
+# 시도는 두 글자 약칭으로 통일하고 행정구역 순서로 보여 준다
+PROVINCE_ORDER = ["서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종", "경기", "강원",
+                  "충북", "충남", "전북", "전남", "경북", "경남", "제주"]
+_PROVINCE_PREFIX = {"충청북": "충북", "충청남": "충남", "전라북": "전북", "전북특별": "전북", "전라남": "전남",
+                    "경상북": "경북", "경상남": "경남"}
+
+
+def short_province(value) -> str:
+    """'경상북도'·'경상북' → '경북', '서울특별시' → '서울'처럼 두 글자로 줄인다."""
+    v = str(value).strip()
+    for prefix, short in _PROVINCE_PREFIX.items():
+        if v.startswith(prefix):
+            return short
+    return v[:2]
 
 
 # 데이터 출처
@@ -102,12 +124,18 @@ def _dataset(root: Path) -> ds.Dataset:
 
 
 def _compact(df: pd.DataFrame) -> pd.DataFrame:
+    if "province" in df:
+        df["province"] = df["province"].map(short_province)
     for col in CATEGORY_COLUMNS:
         if col in df:
             df[col] = df[col].astype("category")
     if "education_level" in df:
         levels = sorted(df["education_level"].cat.categories, key=education_rank)
         df["education_level"] = df["education_level"].cat.reorder_categories(levels, ordered=True)
+    if "province" in df:
+        rank = {p: i for i, p in enumerate(PROVINCE_ORDER)}
+        levels = sorted(df["province"].cat.categories, key=lambda p: (rank.get(p, len(rank)), p))
+        df["province"] = df["province"].cat.reorder_categories(levels, ordered=True)
     df["age_group"] = pd.cut(df["age"], bins=AGE_BINS, labels=AGE_LABELS, right=False).astype("category")
     return df
 

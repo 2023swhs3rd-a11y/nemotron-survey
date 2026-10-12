@@ -70,14 +70,23 @@ COMPARE_CHOICES = ["sex", "age_group", "province", "education_level", "marital_s
                    "housing_type", "family_type", "bachelors_field"]
 
 
+# 데이터 가공 방식(정렬·지역명 등)을 바꾸면 이 값을 올린다. 배포된 서버가 예전 방식으로 만든 표를
+# 캐시에 들고 있으면 코드를 고쳐도 화면에 반영되지 않기 때문이다.
+DATA_VERSION = 3
+
+
+def get_demographics() -> pd.DataFrame:
+    return _load_demographics(DATA_VERSION)
+
+
 # cache_resource: 100만 행 표를 매번 복사하지 않고 한 번 읽은 것을 모든 접속자가 함께 쓴다(읽기 전용).
 @st.cache_resource(show_spinner="페르소나 100만 건의 인구통계 정보를 불러오는 중...")
-def get_demographics() -> pd.DataFrame:
+def _load_demographics(version: int) -> pd.DataFrame:
     return load_demographics()
 
 
 @st.cache_resource
-def get_options() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+def get_options(version: int = DATA_VERSION) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
     return filter_options(get_demographics())
 
 
@@ -254,8 +263,8 @@ with st.sidebar:
     st.subheader("이용 안내")
     st.caption("합성 페르소나의 가상 응답이므로 실제 여론이 아닙니다. 문항 점검과 가설 탐색에 쓰세요.")
     st.caption("추가 문항, 고친 가중치, 결과는 이 브라우저에만 남고 공유되지 않습니다. 필요한 것은 내려받아 두세요.")
-    st.link_button("내 버전 만들기 안내", f"{REPO_URL}#내-버전-만들기", width="stretch")
-    st.link_button("GitHub 저장소", REPO_URL, width="stretch")
+    st.caption("내 문항·코드북으로 쓰려면 저장소를 복제(Fork)해 내 버전을 배포하세요. 방법은 저장소 안내문에 있습니다.")
+    st.link_button("GitHub 저장소 · 내 버전 만들기", f"{REPO_URL}#내-버전-만들기", width="stretch")
 
 # ---------------- 머리말 ----------------
 st.title("대학·진로교육 인식 가상 설문")

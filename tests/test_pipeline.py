@@ -145,3 +145,24 @@ def test_codebook_scoring_and_estimation():
     again = estimate_responses(people, qs, cb)
     assert again[[q.id for q in qs]].equals(estimate_responses(people, qs, cb)[[q.id for q in qs]])  # 재현성
     assert weight_table(qs, cb).loc["Q01", "intercept"] == 3.0
+
+
+def test_province_and_education_order():
+    from survey.data import _compact, filter_options
+
+    df = pd.DataFrame({
+        "uuid": list("abcdef"), "age": [20, 30, 40, 50, 60, 70],
+        "province": ["경상북", "서울특별시", "전라남", "경기", "전북특별자치도", "서울"],
+        "district": list("uvwxyz"),
+        "education_level": ["대학원", "고등학교", "무학", "4년제 대학교", "2~3년제 전문대학", "초등학교"],
+        "sex": "남자", "marital_status": "미혼", "housing_type": "아파트", "family_type": "1인 가구",
+        "bachelors_field": "",
+    })
+    out = _compact(df)
+    opts, _ = filter_options(out)
+    assert opts["province"] == ["서울", "경기", "전북", "전남", "경북"]
+    assert opts["education_level"] == ["무학", "초등학교", "고등학교", "2~3년제 전문대학", "4년제 대학교", "대학원"]
+    s = pd.concat([out] * 5, ignore_index=True)  # 집단마다 5명 이상이어야 비교표에 들어간다
+    s = s.assign(score=range(len(s)))
+    table = analysis.group_compare(s, s[["score"]], "education_level")
+    assert [c.split(" (")[0] for c in table.columns[1:3]] == ["무학", "초등학교"]
