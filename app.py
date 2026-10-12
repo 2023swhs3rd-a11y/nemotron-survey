@@ -35,10 +35,16 @@ st.markdown("""<style>
 .group-label {font-weight: 600; font-size: .95rem; margin: .2rem 0 .3rem; color: #1c5cab;}
 div[data-testid="stMetricValue"] {font-size: 1.7rem;}
 /* 상단 요약 막대: 스크롤해도 화면 위에 붙어 있다 */
-div[data-testid="stLayoutWrapper"]:has(> .st-key-summary_bar) {position: sticky; top: 3.75rem; z-index: 990;}
+/* 높이는 바깥 틀에 고정해야 적용된다(안쪽 상자는 틀 높이를 따라감). 값이 바뀌어도 상자가 움직이지 않게 */
+div[data-testid="stLayoutWrapper"]:has(> .st-key-summary_bar) {position: sticky; top: 3.75rem; z-index: 990;
+                                                              height: 10.5rem; flex: none;}
 .st-key-summary_bar {background: #ffffff; border: 1px solid #dfe5ee; border-radius: .7rem;
-                     padding: 1rem 1.3rem 1.1rem; box-shadow: 0 2px 10px rgba(28, 92, 171, .08);
-                     height: 9.5rem !important; justify-content: center;}  /* 높이 고정: 값이 바뀌어도 상자가 움직이지 않게 */
+                     padding: 1.1rem 1.4rem; box-shadow: 0 2px 10px rgba(28, 92, 171, .08);
+                     height: 100%; justify-content: center;}
+.st-key-summary_bar [data-testid="stMarkdownContainer"] {margin: 0;}
+.st-key-summary_bar [data-testid="stElementContainer"] {margin: 0; height: auto;}
+/* 다시 계산하는 동안 흐려지거나 사라지지 않게 */
+.st-key-summary_bar [data-stale="true"], .st-key-summary_bar[data-stale="true"] {opacity: 1 !important; transition: none !important;}
 .sb-row {display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1rem;}
 .sb-item {display: flex; flex-direction: column; min-width: 0;}
 .sb-label {font-size: .82rem; color: #6b7280; height: 1.2rem;}
@@ -49,10 +55,10 @@ div[data-testid="stLayoutWrapper"]:has(> .st-key-summary_bar) {position: sticky;
 .sb-track {position: relative; height: .6rem; background: #e8edf5; border-radius: .3rem; margin-top: .9rem; overflow: hidden;}
 .sb-fill {position: absolute; left: 0; top: 0; bottom: 0; background: #1c5cab; border-radius: .3rem;}
 .sb-sample {position: absolute; left: 0; top: 0; bottom: 0; background: #f5a524; border-radius: .3rem;}
-.sb-legend {font-size: .78rem; color: #6b7280; margin-top: .6rem; display: flex; gap: 1.2rem; align-items: center;}
+.sb-legend {font-size: .78rem; color: #6b7280; margin-top: .7rem; display: flex; gap: 1.2rem; align-items: center;}
 .sb-dot {display: inline-block; width: .65rem; height: .65rem; border-radius: 50%; margin-right: .35rem; vertical-align: -.05rem;}
 @media (max-width: 900px) {
-  .st-key-summary_bar {height: auto !important;}
+  div[data-testid="stLayoutWrapper"]:has(> .st-key-summary_bar) {height: auto;}
   .sb-row {grid-template-columns: repeat(3, minmax(0, 1fr));}
 }
 /* 고르는 버튼(pills)이 칸을 넘으면 옆 칸에 가려지지 않고 다음 줄로 넘어가게 */
@@ -180,7 +186,6 @@ def render_summary(slot, total: int, pop_n: int | None, recommended: int | None 
         f'<div class="sb-legend"><span>막대 전체 = {total:,}명</span>'
         f'<span><span class="sb-dot" style="background:#1c5cab"></span>대상 인원</span>'
         f'<span><span class="sb-dot" style="background:#f5a524"></span>설정한 표본</span></div>')
-    st.session_state.summary_html = html  # 다음 실행 첫머리에 그대로 다시 그려 상자가 비지 않게
     slot.markdown(html, unsafe_allow_html=True)
 
 
@@ -256,9 +261,8 @@ st.caption("NVIDIA Nemotron-Personas-Korea 합성 페르소나 100만 명 중 �
 
 demo = get_demographics()
 opts, districts_by_province = get_options()
-summary_slot = st.container(key="summary_bar").empty()
-if "summary_html" in st.session_state:  # 새 값이 계산되기 전까지 직전 값을 보여 준다
-    summary_slot.markdown(st.session_state.summary_html, unsafe_allow_html=True)
+# st.empty()는 다시 그릴 때마다 먼저 비워져 상자가 깜빡인다. 컨테이너는 새 값이 올 때까지 직전 내용을 유지한다.
+summary_slot = st.container(key="summary_bar")
 
 @st.cache_resource
 def prefetch_pool() -> ThreadPoolExecutor:
